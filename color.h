@@ -9,8 +9,8 @@
 class color
 {
 public:
-    double r{}, g{}, b{};
-    color(double r, double g, double b) : r(r), g(g), b(b)
+    float r{}, g{}, b{};
+    color(float r, float g, float b) : r(r), g(g), b(b)
     {
     }
 
