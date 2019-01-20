@@ -11,6 +11,8 @@
 
 using namespace std;
 
+using pdc = pair<double, color>;
+
 const double EPSILON = 1.0e-7;
 
 int draw_grid;
@@ -18,7 +20,7 @@ int draw_axes;
 
 double near, far, fov_x, fov_y, aspect_ratio;
 int level_of_recursion;
-int screen_size;
+unsigned screen_size;
 float cb_width;
 double ambient_cb, diffuse_cb, reflection_cb;
 double no_of_objects;
@@ -285,29 +287,69 @@ void generate_point_buffer() {
 }
 
 // ray must be normalized
-pair<double, color>
-intersect_checker_board(const vector_3d &ray, const point &ray_origin) { // returns t and color at intersecting point
+pdc intersect_checker_board(const vector_3d &ray, const point &ray_origin) {
+    // returns t and color at intersecting point
     assert(is_equal(ray.length(), 1.0));
+
+    pdc default_color = {-1, {0, 0, 0}};
+
     vector_3d normal(0, 0, 1);
     if (normal.dot(ray) == 0) {
-//        cout << "Ray is parallel to checkerboard\n";
-        return {-1, {0, 0, 0}}; // ray is parallel to checkerboard; so no intersection point
+        return default_color; // ray is parallel to checkerboard; so no intersection point
     }
     point on_the_plane(0, 0, 0);
     double t = (on_the_plane - ray_origin).dot(normal) / (ray.dot(normal));
     if (t < 0) {
-//        cout << "Ray intersects checkerboard behind eye\n";
-        return {-1, {0, 0, 0}}; // intersects behind the eye
+        return default_color; // intersects behind the eye
     }
     if (t >= far - near) {  // roughly clipping in the far region
         // TODO clip this better
-        return {-1, {0, 0, 0}};
+        return default_color;
     }
 
     point intersection = ray_origin + ray * t;
 
     assert(is_equal(intersection.z, 0.0));
     return {t, get_color_from_checkerboard(intersection)};
+}
+
+// ray must be normalized
+pdc intersect_sphere(const vector_3d &ray, const point &ray_origin, const sphere &s) {
+    assert(is_equal(ray.length(), 1.0));
+
+    pdc default_color = {-1, {0, 0, 0}};
+
+    double a = 1;
+    double b = 2 * ray.dot(ray_origin - s.center);
+    double c = (ray_origin - s.center).dot(ray_origin - s.center) - (s.radius * s.radius);
+
+    double discriminant = b * b - 4 * a * c;
+    if (discriminant < 0) {
+        return default_color;
+    }
+    if (is_equal(discriminant, 0.0)) {
+        double t = -b / (2 * a);
+        if (t < 0 or t > (far - near)) {
+            // behind the eye or further than far plane
+            return default_color;
+        }
+        return {t, s.colour};
+    }
+    if (discriminant > 0) {
+        double t0 = (-b + sqrt(discriminant)) / (2 * a);
+        double t1 = (-b - sqrt(discriminant)) / (2 * a);
+        if (t0 > t1) {
+            swap(t0, t1);
+        }
+        if (t0 < 0) {
+            t0 = t1;
+            if (t0 < 0) {
+                // both are behind the eye
+                return default_color;
+            }
+        }
+        return {t0, s.colour};
+    }
 }
 
 void save_image() {
@@ -329,12 +371,23 @@ void trace_rays() {
             static_cast<unsigned long>(screen_size)));
     for (int i = 0; i < point_buffer.size(); ++i) {
         for (int j = 0; j < point_buffer[i].size(); ++j) {
+            pdc pixel;
+
             point ray_origin = point_buffer[i][j];
             vector_3d ray = ray_origin - the_camera.pos;
             ray = ray.normalize();
-            auto x = intersect_checker_board(ray, ray_origin);
-//            cout << x.second << endl;
-            pixels[i][j] = x.second;
+
+            pixel = intersect_checker_board(ray, ray_origin);
+
+            for (const auto &s : spheres) {
+                auto x = intersect_sphere(ray, ray_origin, s);
+                if (pixel.first < 0 and x.first > 0) {
+                    pixel = x;
+                } else if (x.first < pixel.first and x.first != -1) {
+                    pixel = x;
+                }
+            }
+            pixels[i][j] = pixel.second;
         }
     }
     cout << "Pixel setting done" << endl;
