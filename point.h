@@ -5,20 +5,28 @@
 
 using namespace std;
 
-class point
-{
-  public:
+class point {
+public:
     double x, y, z;
 
-  public:
+public:
     point();
+
     point(double x, double y, double z);
+
     void print_point() const;
 
     point add_vector(vector_3d v) const;
+
     vector_3d gen_vector(point another) const;
+
+    point operator+(vector_3d v) const;
+
+    vector_3d operator-(point p) const;
 };
 
 istream &operator>>(istream &stream, point &obj);
+
 ostream &operator<<(ostream &stream, const point &obj);
+
 #endif

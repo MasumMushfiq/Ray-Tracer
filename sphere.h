@@ -19,6 +19,8 @@ struct sphere {
     sphere() = default;
 };
 
-istream& operator>>(istream &stream, sphere &s);
+istream &operator>>(istream &stream, sphere &s);
+
 ostream &operator<<(ostream &stream, const sphere &s);
+
 #endif //OFFLINE4_SPHERE_H

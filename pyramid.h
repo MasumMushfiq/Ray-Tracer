@@ -22,7 +22,8 @@ struct pyramid {
     void complete_pyramid();
 };
 
-istream& operator>>(istream &stream, pyramid &s);
+istream &operator>>(istream &stream, pyramid &s);
+
 ostream &operator<<(ostream &stream, const pyramid &s);
 
 

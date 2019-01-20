@@ -3,92 +3,105 @@
 #include "point.h"
 #include "sphere.h"
 #include "pyramid.h"
+#include "light_source.h"
+#include "spotlight.h"
+#include "bitmap_image.hpp"
 
 #include <GL/glut.h>
 
 using namespace std;
 
+const double EPSILON = 1.0e-7;
+
 int draw_grid;
 int draw_axes;
 
-double near, far, fov_y, aspect_ratio;
-int level_of_recursion, screen_size;
+double near, far, fov_x, fov_y, aspect_ratio;
+int level_of_recursion;
+int screen_size;
 float cb_width;
 double ambient_cb, diffuse_cb, reflection_cb;
 double no_of_objects;
 double no_of_light_sources;
+double no_of_spotlights;
 
 vector<sphere> spheres;
 vector<pyramid> pyramids;
-vector<point> light_sources;
+vector<light_source> light_sources;
+vector<spotlight> spotlights;
+vector<vector<point>> point_buffer;
+vector<vector<color>> pixels;
 
 struct camera {
     point pos;
     vector_3d u, r, l;
 
-    const int CAMERA_MOVEMENT = 10;
+    const int CAMERA_POSITION_MOVEMENT = 10; // unit co-ordinate change
+    const int CAMERA_ANGLE_MOVEMENT = 10;   // degree to rotate
 
     camera() {
         init_camera();
     }
 
     void init_camera() {
-        pos = point(0, -150, 50);
+        pos = point(0, -100, 50);
 
         l = vector_3d(0, 1, 0);
         u = vector_3d(0, 0, 1);
         r = vector_3d(1, 0, 0);
     }
 
-    void move_forward() { pos = pos.add_vector(l); }
+    void move_forward() { pos = pos + (l * CAMERA_POSITION_MOVEMENT); }
 
-    void move_backward() { pos = pos.add_vector(l.scale(-1)); }
+    void move_backward() { pos = pos + (l * (-1) * CAMERA_POSITION_MOVEMENT); }
 
-    void move_right() { pos = pos.add_vector(r); }
+    void move_right() { pos = pos + (r * CAMERA_POSITION_MOVEMENT); }
 
-    void move_left() { pos = pos.add_vector(r.scale(-1)); }
+    void move_left() { pos = pos + (r * (-1) * CAMERA_POSITION_MOVEMENT); }
 
-    void move_up() { pos = pos.add_vector(u); }
+    void move_up() { pos = pos + (u * CAMERA_POSITION_MOVEMENT); }
 
-    void move_down() { pos = pos.add_vector(u.scale(-1)); }
+    void move_down() { pos = pos + (u * (-1) * CAMERA_POSITION_MOVEMENT); }
 
     void look_left() {
-        r = r.rotate_3d(CAMERA_MOVEMENT, u);
-        l = l.rotate_3d(CAMERA_MOVEMENT, u);
+        r = r.rotate_3d(CAMERA_ANGLE_MOVEMENT, u);
+        l = l.rotate_3d(CAMERA_ANGLE_MOVEMENT, u);
     }
 
     void look_right() {
-        r = r.rotate_3d(-CAMERA_MOVEMENT, u);
-        l = l.rotate_3d(-CAMERA_MOVEMENT, u);
+        r = r.rotate_3d(-CAMERA_ANGLE_MOVEMENT, u);
+        l = l.rotate_3d(-CAMERA_ANGLE_MOVEMENT, u);
     }
 
     void look_up() {
-        u = u.rotate_3d(CAMERA_MOVEMENT, r);
-        l = l.rotate_3d(CAMERA_MOVEMENT, r);
+        u = u.rotate_3d(CAMERA_ANGLE_MOVEMENT, r);
+        l = l.rotate_3d(CAMERA_ANGLE_MOVEMENT, r);
     }
 
     void look_down() {
-        u = u.rotate_3d(-CAMERA_MOVEMENT, r);
-        l = l.rotate_3d(-CAMERA_MOVEMENT, r);
+        u = u.rotate_3d(-CAMERA_ANGLE_MOVEMENT, r);
+        l = l.rotate_3d(-CAMERA_ANGLE_MOVEMENT, r);
     }
 
     void tilt_clockwise() {
-        u = u.rotate_3d(-CAMERA_MOVEMENT, l);
-        r = r.rotate_3d(-CAMERA_MOVEMENT, l);
+        u = u.rotate_3d(-CAMERA_ANGLE_MOVEMENT, l);
+        r = r.rotate_3d(-CAMERA_ANGLE_MOVEMENT, l);
     }
 
     void tilt_counterclockwise() {
-        u = u.rotate_3d(CAMERA_MOVEMENT, l);
-        r = r.rotate_3d(CAMERA_MOVEMENT, l);
+        u = u.rotate_3d(CAMERA_ANGLE_MOVEMENT, l);
+        r = r.rotate_3d(CAMERA_ANGLE_MOVEMENT, l);
     }
 
     void reset() { init_camera(); }
 
-} my_camera;
+} the_camera;
+
+inline bool is_equal(double d1, double d2) { return abs(d1 - d2) <= EPSILON; }
 
 void drawAxes() {
     if (draw_axes == 1) {
-        glColor3f(0, 0, 0);
+        glColor3f(1, 0, 0);
         glBegin(GL_LINES);
         {
             glVertex3f(1000, 0, 0);
@@ -195,7 +208,7 @@ void drawPyramid(double width, double height) {
 }
 
 void drawCheckerBoard() {
-    int no_of_boards = static_cast<int>(far * 2 / cb_width);
+    int no_of_boards = static_cast<int>(far * 5 / cb_width);
     int limit = 2 * no_of_boards;
 
     float base_x = -cb_width * no_of_boards;
@@ -214,33 +227,143 @@ void drawCheckerBoard() {
             {
                 glVertex3f(x, y, 0);
                 glVertex3f(x + a, y, 0);
-                glVertex3f(x + a, y + a, 0);
-                glVertex3f(x, y + a, 0);
+                glVertex3f(x + a, y - a, 0);
+                glVertex3f(x, y - a, 0);
             }
             glEnd();
         }
     }
 }
 
+color get_color_from_checkerboard(point intersection) {
+    int i = static_cast<int>(floor((intersection.x + cb_width * floor(2 * far / cb_width)) / cb_width));
+    int j = static_cast<int>(floor((cb_width * floor(2 * far / cb_width) - intersection.y) / cb_width));
+    int clr = (i + j) % 2;
+    float c = clr * 1.0f;
+//    cout << i << " " << j << " " << c << endl;
+    return {c, c, c};
+}
+
+void generate_point_buffer() {
+    point_buffer = vector<vector<point>>(static_cast<unsigned long>(screen_size), vector<point>(
+            static_cast<unsigned long>(screen_size)));
+
+    double half_y = near * tan(fov_y / 2 * (PI / 180.0));
+    double half_x = near * tan(fov_x / 2 * (PI / 180.0));
+    point center = the_camera.pos + the_camera.l * near;
+    point center_top = center + the_camera.u * half_y;
+    point top_left = center_top + the_camera.r * (-1 * half_x);
+
+    double del_y = half_y / screen_size;
+    double del_x = half_x / screen_size;
+    for (int i = 0; i < screen_size; ++i) {
+        point base_row = top_left + the_camera.u * (-1) * (2 * i + 1) * del_y;
+
+        for (int j = 0; j < screen_size; ++j) {
+            point p = base_row + the_camera.r * (2 * j + 1) * del_x;
+            point_buffer[i][j] = p;
+        }
+    }
+
+    ofstream pb;
+    pb.open("pb.txt");
+    if (!pb.is_open()) {
+        cerr << "Cannot write the point buffer" << endl;
+        return;
+    }
+    pb << fixed;
+    pb << setprecision(2);
+    for (const auto &v : point_buffer) {
+        for (const auto &p : v) {
+            pb << "<" << p << ">\t";
+        }
+        pb << endl;
+    }
+    pb.close();
+
+    cout << "Point buffer generation done" << endl;
+}
+
+// ray must be normalized
+pair<double, color>
+intersect_checker_board(const vector_3d &ray, const point &ray_origin) { // returns t and color at intersecting point
+    assert(is_equal(ray.length(), 1.0));
+    vector_3d normal(0, 0, 1);
+    if (normal.dot(ray) == 0) {
+//        cout << "Ray is parallel to checkerboard\n";
+        return {-1, {0, 0, 0}}; // ray is parallel to checkerboard; so no intersection point
+    }
+    point on_the_plane(0, 0, 0);
+    double t = (on_the_plane - ray_origin).dot(normal) / (ray.dot(normal));
+    if (t < 0) {
+//        cout << "Ray intersects checkerboard behind eye\n";
+        return {-1, {0, 0, 0}}; // intersects behind the eye
+    }
+    if (t >= far - near) {  // roughly clipping in the far region
+        // TODO clip this better
+        return {-1, {0, 0, 0}};
+    }
+
+    point intersection = ray_origin + ray * t;
+
+    assert(is_equal(intersection.z, 0.0));
+    return {t, get_color_from_checkerboard(intersection)};
+}
+
+void save_image() {
+    bitmap_image image(screen_size, screen_size);
+    for (unsigned y = 0; y < screen_size; y++) {
+        for (unsigned x = 0; x < screen_size; x++) {
+            image.set_pixel(x, y, static_cast<const unsigned char>(pixels[y][x].r * 255),
+                            static_cast<const unsigned char>(pixels[y][x].g * 255),
+                            static_cast<const unsigned char>(pixels[y][x].b * 255));
+        }
+    }
+    image.save_image("out.bmp");
+}
+
+void trace_rays() {
+    generate_point_buffer();
+
+    pixels = vector<vector<color>>(static_cast<unsigned long>(screen_size), vector<color>(
+            static_cast<unsigned long>(screen_size)));
+    for (int i = 0; i < point_buffer.size(); ++i) {
+        for (int j = 0; j < point_buffer[i].size(); ++j) {
+            point ray_origin = point_buffer[i][j];
+            vector_3d ray = ray_origin - the_camera.pos;
+            ray = ray.normalize();
+            auto x = intersect_checker_board(ray, ray_origin);
+//            cout << x.second << endl;
+            pixels[i][j] = x.second;
+        }
+    }
+    cout << "Pixel setting done" << endl;
+
+    save_image();
+}
+
 void keyboardListener(unsigned char key, int x, int y) {
     switch (key) {
         case '1':
-            my_camera.look_left();
+            the_camera.look_left();
             break;
         case '2':
-            my_camera.look_right();
+            the_camera.look_right();
             break;
         case '3':
-            my_camera.look_up();
+            the_camera.look_up();
             break;
         case '4':
-            my_camera.look_down();
+            the_camera.look_down();
             break;
         case '5':
-            my_camera.tilt_clockwise();
+            the_camera.tilt_clockwise();
             break;
         case '6':
-            my_camera.tilt_counterclockwise();
+            the_camera.tilt_counterclockwise();
+            break;
+        case '0':
+            trace_rays();
             break;
         default:
             break;
@@ -250,31 +373,31 @@ void keyboardListener(unsigned char key, int x, int y) {
 void specialKeyListener(int key, int x, int y) {
     switch (key) {
         case GLUT_KEY_DOWN: //down arrow key
-            my_camera.move_backward();
+            the_camera.move_backward();
             break;
         case GLUT_KEY_UP: // up arrow key
-            my_camera.move_forward();
+            the_camera.move_forward();
             break;
 
         case GLUT_KEY_RIGHT:
-            my_camera.move_right();
+            the_camera.move_right();
             break;
         case GLUT_KEY_LEFT:
-            my_camera.move_left();
+            the_camera.move_left();
             break;
 
         case GLUT_KEY_PAGE_UP:
-            my_camera.move_up();
+            the_camera.move_up();
             break;
         case GLUT_KEY_PAGE_DOWN:
-            my_camera.move_down();
+            the_camera.move_down();
             break;
 
         case GLUT_KEY_INSERT:
             break;
 
         case GLUT_KEY_HOME:
-            my_camera.reset();
+            the_camera.reset();
             break;
         case GLUT_KEY_END:
             break;
@@ -333,9 +456,9 @@ void display() {
         //gluLookAt(50, 50, -100, 0, 0, 0, 1, 0, 0);
         //gluLookAt(200 * cos(cameraAngle), 200 * sin(cameraAngle), cameraHeight, 0, 0, 0, 0, 0, 1);
         //gluLookAt(0, 0, 200, 0, 0, 0, 0, 1, 0);
-        point p = my_camera.pos.add_vector(my_camera.l);
-        gluLookAt(my_camera.pos.x, my_camera.pos.y, my_camera.pos.z,
-                  p.x, p.y, p.z, my_camera.u.i, my_camera.u.j, my_camera.u.k);
+        point p = the_camera.pos.add_vector(the_camera.l);
+        gluLookAt(the_camera.pos.x, the_camera.pos.y, the_camera.pos.z,
+                  p.x, p.y, p.z, the_camera.u.i, the_camera.u.j, the_camera.u.k);
 
         //again select MODEL-VIEW
         glMatrixMode(GL_MODELVIEW);
@@ -345,7 +468,7 @@ void display() {
 	****************************/
     //add objects
 
-//    drawAxes();
+    drawAxes();
 //    drawGrid();
 
     drawCheckerBoard();
@@ -369,7 +492,7 @@ void display() {
     for (const auto &l : light_sources) {
         glPushMatrix();
         glColor3f(1.0, 1.0, 1.0);
-        glTranslated(l.x, l.y, l.z);
+        glTranslated(l.position.x, l.position.y, l.position.z);
         drawSphere(10, 32, 32);
         glPopMatrix();
     }
@@ -386,8 +509,8 @@ void animate() {
 
 void init() {
     //codes for initialization
-    draw_grid = 1;
-    draw_axes = 1;
+    draw_grid = 0;
+    draw_axes = 0;
 
     //clear the screen
     glClearColor(0, 0, 0, 0);
@@ -427,6 +550,8 @@ void take_input() {
     description >> ambient_cb >> diffuse_cb >> reflection_cb;
     description >> no_of_objects;
 
+    fov_x = fov_y * aspect_ratio;
+
     assert(ambient_cb + diffuse_cb + reflection_cb == 1.0);
 
     for (int i = 0; i < no_of_objects; ++i) {
@@ -451,9 +576,24 @@ void take_input() {
 
     for (int j = 0; j < no_of_light_sources; ++j) {
         point p;
-        description >> p;
-        light_sources.push_back(p);
+        double fall_off;
+        description >> p >> fall_off;
+        light_sources.emplace_back(p, fall_off);
     }
+
+    description >> no_of_spotlights;
+
+    for (int k = 0; k < no_of_spotlights; ++k) {
+        point pos, looking_at;
+        double fall_off, angle;
+
+        description >> pos >> fall_off;
+        description >> looking_at >> angle;
+
+        spotlights.emplace_back(pos, fall_off, looking_at, angle);
+    }
+
+
     cout << "Done taking input" << endl;
 }
 
