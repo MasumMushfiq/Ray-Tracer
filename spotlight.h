@@ -10,7 +10,7 @@
 
 struct spotlight : public light_source {
     point looking_at;
-    double angle;   // angle in degree
+    double cutoff_angle;   // angle in degree
 
     vector_3d direction;
 

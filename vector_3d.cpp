@@ -128,7 +128,7 @@ vector_3d vector_3d::reflect(vector_3d normal) const {
     vector_3d n_unit = normal.normalize();
     double val = dot(n_unit);
     vector_3d u = n_unit.scale(2 * val);
-    return subtract(u);
+    return subtract(u).normalize();
 }
 
 vector_3d vector_3d::operator+(const vector_3d &another) const {

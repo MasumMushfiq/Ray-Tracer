@@ -20,6 +20,8 @@ public:
 
     vector_3d gen_vector(point another) const;
 
+    double get_distance(const point &other) const;
+
     point operator+(vector_3d v) const;
 
     vector_3d operator-(point p) const;

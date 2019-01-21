@@ -17,6 +17,9 @@ struct sphere {
     double shininess{};
 
     sphere() = default;
+
+    // normal unit vector at point p where p is on the sphere
+    vector_3d get_normal_at_point(const point &p) const;
 };
 
 istream &operator>>(istream &stream, sphere &s);

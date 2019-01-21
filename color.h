@@ -16,6 +16,10 @@ public:
 
     color()
     = default;
+
+    color operator*(float m) const {
+        return color(r * m, g * m, b * m);
+    }
 };
 
 inline ostream &operator<<(ostream &stream, const color &c) {

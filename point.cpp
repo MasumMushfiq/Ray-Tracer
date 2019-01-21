@@ -32,6 +32,11 @@ vector_3d point::operator-(point p) const {
     return vector_3d(x - p.x, y - p.y, z - p.z);
 }
 
+double point::get_distance(const point &other) const {
+    auto d = other - *this;
+    return d.length();
+}
+
 istream &operator>>(istream &stream, point &obj) {
     stream >> obj.x >> obj.y >> obj.z;
     return stream;

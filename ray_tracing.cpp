@@ -26,6 +26,7 @@ double ambient_cb, diffuse_cb, reflection_cb;
 double no_of_objects;
 double no_of_light_sources;
 double no_of_spotlights;
+double far_t;
 color black = {0, 0, 0};
 color white = {1, 1, 1};
 
@@ -101,6 +102,25 @@ struct camera {
 
 } the_camera;
 
+struct result {
+    double t;
+    color c;
+    vector_3d reflected_ray;
+    point intersection;
+
+    result(double t, color c, vector_3d rr, point i) :
+            t(t), c(c), reflected_ray(rr), intersection(i) {
+    }
+
+    result() {
+        t = -1;
+        c = {0, 0, 0};
+        reflected_ray = vector_3d(0, 0, 0);
+        intersection = point(0, 0, 0);
+    }
+
+};
+
 inline bool is_equal(double d1, double d2) { return abs(d1 - d2) <= EPSILON; }
 
 void drawAxes() {
@@ -116,30 +136,6 @@ void drawAxes() {
 
             glVertex3f(0, 0, 1000);
             glVertex3f(0, 0, -1000);
-        }
-        glEnd();
-    }
-}
-
-void drawGrid() {
-    int i;
-    if (draw_grid == 1) {
-        glColor3f(0.6, 0.6, 0.6); //grey
-        glBegin(GL_LINES);
-        {
-            for (i = -80; i <= 80; i++) {
-
-                if (i == 0)
-                    continue; //SKIP the MAIN axes
-
-                //lines parallel to Y-axis
-                glVertex3f(i * 10, -900, 0);
-                glVertex3f(i * 10, 900, 0);
-
-                //lines parallel to X-axis
-                glVertex3f(-900, i * 10, 0);
-                glVertex3f(900, i * 10, 0);
-            }
         }
         glEnd();
     }
@@ -272,42 +268,46 @@ void generate_point_buffer() {
     cout << "Point buffer generation done" << endl;
 }
 
-// TODO implement in a better way
 bool is_beyond_far(double t) {
-    return t >= (far - near);
+    return t >= far_t;
 }
 
 // ray must be normalized
-pdc intersect_checker_board(const vector_3d &ray, const point &ray_origin) {
+result intersect_checker_board(const vector_3d &ray, const point &ray_origin) {
     // returns t and color at intersecting point
     assert(is_equal(ray.length(), 1.0));
 
-    pdc default_color = {-1, {0, 0, 0}};
+    result default_result;
 
     vector_3d normal(0, 0, 1);
     if (normal.dot(ray) == 0) {
-        return default_color; // ray is parallel to checkerboard; so no intersection point
+        return default_result; // ray is parallel to checkerboard; so no intersection point
     }
     point on_the_plane(0, 0, 0);
     double t = (on_the_plane - ray_origin).dot(normal) / (ray.dot(normal));
     if (t < 0) {
-        return default_color; // intersects behind the eye
+        return default_result; // intersects behind the eye
     }
     if (is_beyond_far(t)) {  // roughly clipping in the far region
-        return default_color;
+        return default_result;
     }
 
     point intersection = ray_origin + ray * t;
 
     assert(is_equal(intersection.z, 0.0));
-    return {t, get_color_from_checkerboard(intersection)};
+
+    color c = get_color_from_checkerboard(intersection);
+    vector_3d reflected_ray = ray.reflect({0, 0, 1});
+    result r(t, c, reflected_ray, intersection);
+//    return {t, get_color_from_checkerboard(intersection)};
+    return r;
 }
 
 // ray must be normalized
-pdc intersect_sphere(const vector_3d &ray, const point &ray_origin, const sphere &s) {
+result intersect_sphere(const vector_3d &ray, const point &ray_origin, const sphere &s) {
     assert(is_equal(ray.length(), 1.0));
 
-    pdc default_color = {-1, {0, 0, 0}};
+    result default_result;
 
     double a = 1;
     double b = 2 * ray.dot(ray_origin - s.center);
@@ -315,17 +315,17 @@ pdc intersect_sphere(const vector_3d &ray, const point &ray_origin, const sphere
 
     double discriminant = b * b - 4 * a * c;
     if (discriminant < 0) {
-        return default_color;
-    }
-    if (is_equal(discriminant, 0.0)) {
+        return default_result;
+    } else if (is_equal(discriminant, 0.0)) {
         double t = -b / (2 * a);
         if (t < 0 or is_beyond_far(t)) {
             // behind the eye or further than far plane
-            return default_color;
+            return default_result;
         }
-        return {t, s.colour};
-    }
-    if (discriminant > 0) {
+        point intersection = ray_origin + ray * t;
+        result r(t, s.colour, s.get_normal_at_point(intersection), intersection);
+        return r;
+    } else {
         double t0 = (-b + sqrt(discriminant)) / (2 * a);
         double t1 = (-b - sqrt(discriminant)) / (2 * a);
         if (t0 > t1) {
@@ -335,23 +335,25 @@ pdc intersect_sphere(const vector_3d &ray, const point &ray_origin, const sphere
             t0 = t1;
             if (t0 < 0) {
                 // both are behind the eye
-                return default_color;
+                return default_result;
             }
         }
         if (is_beyond_far(t0)) {
-            return default_color;
+            return default_result;
         }
-        return {t0, s.colour};
+        point intersection = ray_origin + ray * t0;
+        result r(t0, s.colour, s.get_normal_at_point(intersection), intersection);
+        return r;
     }
 }
 
 
 // ray must be normalized
-pdc intersect_triangle(const vector_3d &ray, const point &origin,
-                       const point &v0, const point &v1, const point &v2) {
+result intersect_triangle(const vector_3d &ray, const point &origin,
+                          const point &v0, const point &v1, const point &v2) {
 
     assert(is_equal(ray.length(), 1.0));
-    pdc default_color = {-1, black};
+    result default_result;
 
     // edge vectors
     vector_3d e1 = v1 - v0;
@@ -363,9 +365,9 @@ pdc intersect_triangle(const vector_3d &ray, const point &origin,
     vector_3d q = ray.cross(e2);
     double a = e1.dot(q);
 
-    // backfacing or nearly parallel ??
+    // nearly parallel ??
     if (is_equal(a, 0)) {
-        return default_color;
+        return default_result;
     }
 
     vector_3d s = (origin - v0) * (1.0 / a);
@@ -377,52 +379,44 @@ pdc intersect_triangle(const vector_3d &ray, const point &origin,
 
     // intersected outside triangle ??
     if (b0 < 0 or b1 < 0 or b2 < 0) {
-        return default_color;
+        return default_result;
     }
 
     double t = e2.dot(r);
     if (t < 0 or is_beyond_far(t)) {
         // outside viewing planes
-        return default_color;
+        return default_result;
     }
-    return {t, white};
+    point intersection = origin + ray * t;
+    return {t, white, n, intersection};
 }
 
 // ray must be normalized
-pdc intersect_pyramid(const vector_3d &ray, const point &ray_origin, const pyramid &p) {
+result intersect_pyramid(const vector_3d &ray, const point &ray_origin, const pyramid &p) {
     assert(is_equal(ray.length(), 1.0));
-    pdc default_color = {-1, black};
+    result default_result;
 
-    vector<double> ts;
-    ts.push_back(intersect_triangle(ray, ray_origin, p.top, p.lower_right, p.lower_left).first);
-    ts.push_back(intersect_triangle(ray, ray_origin, p.top, p.lower_left, p.upper_left).first);
-    ts.push_back(intersect_triangle(ray, ray_origin, p.top, p.upper_left, p.upper_right).first);
-    ts.push_back(intersect_triangle(ray, ray_origin, p.top, p.upper_right, p.lower_right).first);
-    ts.push_back(intersect_triangle(ray, ray_origin, p.upper_right, p.lower_right, p.upper_left).first);
-    ts.push_back(intersect_triangle(ray, ray_origin, p.lower_right, p.upper_left, p.lower_left).first);
+    vector<result> ts;
+    ts.push_back(intersect_triangle(ray, ray_origin, p.top, p.lower_right, p.lower_left));
+    ts.push_back(intersect_triangle(ray, ray_origin, p.top, p.lower_left, p.upper_left));
+    ts.push_back(intersect_triangle(ray, ray_origin, p.top, p.upper_left, p.upper_right));
+    ts.push_back(intersect_triangle(ray, ray_origin, p.top, p.upper_right, p.lower_right));
+    ts.push_back(intersect_triangle(ray, ray_origin, p.upper_right, p.lower_right, p.upper_left));
+    ts.push_back(intersect_triangle(ray, ray_origin, p.lower_right, p.upper_left, p.lower_left));
 
-    /*for (auto t : ts) {
-        cout << t << " ";
+    sort(begin(ts), end(ts), [](result r1, result r2) -> bool { return r1.t < r2.t; });
+
+    if (is_equal(ts[5].t, -1.0)) {
+        return default_result;
     }
-    cout << endl;*/
 
-    sort(begin(ts), end(ts));
-    if (is_equal(ts[5], -1.0)) {
-        return default_color;
-    }
-    pdc res = default_color;
-    bool flag = false;
-    int count = 0;
     for (auto t : ts) {
-        if (t > 0.0) count++;
-        if (t > 0.0 and !flag) {
-            res = {t, p.colour};
-            flag = true;
+        if (t.t > 0.0) {
+            t.c = p.colour;
+            return t;
         }
     }
-//    if (count > 1) cout << "Hell yeah\n";
-
-    return res;
+    return default_result;
 }
 
 void save_image() {
@@ -444,33 +438,34 @@ void trace_rays() {
             static_cast<unsigned long>(screen_size)));
     for (int i = 0; i < point_buffer.size(); ++i) {
         for (int j = 0; j < point_buffer[i].size(); ++j) {
-            pdc pixel;
+            result pixel;
 
             point ray_origin = point_buffer[i][j];
             vector_3d ray = ray_origin - the_camera.pos;
             ray = ray.normalize();
+            far_t = far / (ray.dot(the_camera.l));
 
             pixel = intersect_checker_board(ray, ray_origin);
 
             for (const auto &s : spheres) {
                 auto x = intersect_sphere(ray, ray_origin, s);
-                if (pixel.first < 0 and x.first > 0) {
+                if (pixel.t < 0 and x.t > 0) {
                     pixel = x;
-                } else if (x.first < pixel.first and x.first != -1) {
+                } else if (x.t < pixel.t and x.t != -1) {
                     pixel = x;
                 }
             }
 
             for (const auto &p : pyramids) {
                 auto x = intersect_pyramid(ray, ray_origin, p);
-                if (pixel.first < 0 and x.first > 0) {
+                if (pixel.t < 0 and x.t > 0) {
                     pixel = x;
-                } else if (x.first < pixel.first and x.first != -1) {
+                } else if (x.t < pixel.t and x.t != -1) {
                     pixel = x;
                 }
             }
 
-            pixels[i][j] = pixel.second;
+            pixels[i][j] = pixel.c;
         }
     }
     cout << "Pixel setting done" << endl;
@@ -605,7 +600,6 @@ void display() {
     //add objects
 
     drawAxes();
-//    drawGrid();
 
     drawCheckerBoard();
 
