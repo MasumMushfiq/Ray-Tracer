@@ -25,7 +25,7 @@ double ambient_cb, diffuse_cb, reflection_cb;
 double no_of_objects;
 double no_of_light_sources;
 double no_of_spotlights;
-double far_t;
+double far_t, top_far_t;
 color black = {0, 0, 0};
 color white = {1, 1, 1};
 
@@ -40,15 +40,15 @@ struct camera {
     point pos;
     vector_3d u, r, l;
 
-    const int CAMERA_POSITION_MOVEMENT = 10; // unit co-ordinate change
-    const int CAMERA_ANGLE_MOVEMENT = 10;   // degree to rotate
+    const int CAMERA_POSITION_MOVEMENT = 5; // unit co-ordinate change
+    const int CAMERA_ANGLE_MOVEMENT = 5;   // degree to rotate
 
     camera() {
         init_camera();
     }
 
     void init_camera() {
-        pos = point(0, -100, 50);
+        pos = point(20, -150, 50);
 
         l = vector_3d(0, 1, 0);
         u = vector_3d(0, 0, 1);
@@ -120,6 +120,9 @@ struct result {
         intersection = point(0, 0, 0);
     }
 
+    point get_advanced_origin() {
+        return intersection + reflected_ray * 0.0001;
+    }
 };
 
 struct light_properties {
@@ -186,15 +189,6 @@ void drawSphere(double radius, int slices, int stacks) {
 }
 
 void drawPyramid(double width, double height) {
-    glBegin(GL_QUADS);
-    {
-        glVertex3d(0, 0, 0);
-        glVertex3d(0, width, 0);
-        glVertex3d(width, width, 0);
-        glVertex3d(width, 0, 0);
-    }
-    glEnd();
-
     glBegin(GL_TRIANGLES);
     {
         glVertex3d(0, 0, 0);
@@ -212,6 +206,14 @@ void drawPyramid(double width, double height) {
         glVertex3d(width, 0, 0);
         glVertex3d(0, 0, 0);
         glVertex3d(width / 2.0, width / 2.0, height);
+
+        glVertex3d(0, 0, 0);
+        glVertex3d(0, width, 0);
+        glVertex3d(width, width, 0);
+
+        glVertex3d(0, 0, 0);
+        glVertex3d(width, width, 0);
+        glVertex3d(width, 0, 0);
     }
     glEnd();
 }
@@ -441,7 +443,6 @@ bool is_illuminates_ls(const light_source &ls, const point &intersection) {
 
     auto res = intersect_checker_board(ray, ray_origin);
     if (res.t > 0 and res.t < distance) {
-        cout << "Checkerboard hinders light\n";
         return false;
     }
     for (const auto &s : spheres) {
@@ -506,7 +507,11 @@ pair<double, double> get_lambert_and_phong(const point &intersection, const vect
     return {lambert, phong};
 }
 
-color get_color_for_ray(const vector_3d &ray, const point &ray_origin) {
+color get_color_for_ray(const vector_3d &ray, const point &ray_origin, int level) {
+    if (level == 0) {
+        return black;
+    }
+
     result pixel;
 
     light_properties lp(ambient_cb, diffuse_cb, 0, reflection_cb, 0);
@@ -535,10 +540,22 @@ color get_color_for_ray(const vector_3d &ray, const point &ray_origin) {
         }
     }
 
-    auto lambert_phong = get_lambert_and_phong(pixel.intersection, pixel.normal,
-                                               pixel.reflected_ray, lp.shininess);
-    auto c = pixel.c *
-             (lp.ambient + lp.diffuse * lambert_phong.first + lp.specular * lambert_phong.second + lp.specular);
+    pair<double, double> lambert_phong = {0, 0};
+    double lambert = 0.0, phong = 0.0;
+
+    far_t = top_far_t - pixel.t;
+    color reflected_color = black;
+    if (pixel.t > 0.0) {
+        lambert_phong = get_lambert_and_phong(pixel.intersection, pixel.normal,
+                                              pixel.reflected_ray, lp.shininess);
+        lambert = lambert_phong.first;
+        phong = lambert_phong.second;
+        reflected_color = get_color_for_ray(pixel.reflected_ray,
+                                            pixel.get_advanced_origin(), level - 1);
+    }
+
+    auto c = pixel.c * (lp.ambient + lp.diffuse * lambert + lp.specular * phong) +
+             (reflected_color * lp.reflection);
 
     return c;
 }
@@ -555,6 +572,14 @@ void save_image() {
     image.save_image("out.bmp");
 }
 
+void print_status(int row) {
+    for (int i = 1; i <= 10; ++i) {
+        if (row == (screen_size / 10 * i) - 1) {
+            cout << "Rendering " << i * 10 << "% complete" << endl;
+        }
+    }
+}
+
 void trace_rays() {
     generate_point_buffer();
 
@@ -565,14 +590,16 @@ void trace_rays() {
             point ray_origin = point_buffer[i][j];
             vector_3d ray = ray_origin - the_camera.pos;
             ray = ray.normalize();
-            far_t = far / (ray.dot(the_camera.l));
+            top_far_t = far / (ray.dot(the_camera.l));
+            far_t = top_far_t;
 
-            pixels[i][j] = get_color_for_ray(ray, ray_origin);
+            pixels[i][j] = get_color_for_ray(ray, ray_origin, level_of_recursion);
         }
+        print_status(i);
     }
-    cout << "Pixel setting done" << endl;
 
     save_image();
+    cout << "Image Saved" << endl;
 }
 
 void keyboardListener(unsigned char key, int x, int y) {
@@ -723,9 +750,9 @@ void display() {
 
     for (const auto &l : light_sources) {
         glPushMatrix();
-        glColor3f(1.0, 1.0, 1.0);
+        glColor3f(1.0, 0.0, 0.0);
         glTranslated(l.position.x, l.position.y, l.position.z);
-        drawSphere(10, 32, 32);
+        drawSphere(5, 32, 32);
         glPopMatrix();
     }
 
@@ -733,7 +760,7 @@ void display() {
         glPushMatrix();
         glColor3f(0.0, 1.0, 0.0);
         glTranslated(spotlight.position.x, spotlight.position.y, spotlight.position.z);
-        drawSphere(10, 32, 32);
+        drawSphere(5, 32, 32);
         glPopMatrix();
     }
 

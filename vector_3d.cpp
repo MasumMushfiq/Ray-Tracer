@@ -1,5 +1,6 @@
 #include <iostream>
 #include <cmath>
+#include <cassert>
 #include "vector_3d.h"
 
 using namespace std;
@@ -61,6 +62,7 @@ double vector_3d::length() const {
 
 vector_3d vector_3d::normalize() const {
     double l = length();
+    assert(abs(l - 0.0) > 1e-9);    // length not zero
     double x = i / l;
     double y = j / l;
     double z = k / l;

@@ -20,6 +20,10 @@ public:
     color operator*(float m) const {
         return color(r * m, g * m, b * m);
     }
+
+    color operator+(const color &c) const {
+        return color(r + c.r, g + c.g, b + c.b);
+    }
 };
 
 inline ostream &operator<<(ostream &stream, const color &c) {
