@@ -26,6 +26,8 @@ double ambient_cb, diffuse_cb, reflection_cb;
 double no_of_objects;
 double no_of_light_sources;
 double no_of_spotlights;
+color black = {0, 0, 0};
+color white = {1, 1, 1};
 
 vector<sphere> spheres;
 vector<pyramid> pyramids;
@@ -210,7 +212,7 @@ void drawPyramid(double width, double height) {
 }
 
 void drawCheckerBoard() {
-    int no_of_boards = static_cast<int>(far * 5 / cb_width);
+    auto no_of_boards = static_cast<int>(far * 5 / cb_width);
     int limit = 2 * no_of_boards;
 
     float base_x = -cb_width * no_of_boards;
@@ -238,8 +240,8 @@ void drawCheckerBoard() {
 }
 
 color get_color_from_checkerboard(point intersection) {
-    int i = static_cast<int>(floor((intersection.x + cb_width * floor(2 * far / cb_width)) / cb_width));
-    int j = static_cast<int>(floor((cb_width * floor(2 * far / cb_width) - intersection.y) / cb_width));
+    auto i = static_cast<int>(floor((intersection.x + cb_width * floor(2 * far / cb_width)) / cb_width));
+    auto j = static_cast<int>(floor((cb_width * floor(2 * far / cb_width) - intersection.y) / cb_width));
     int clr = (i + j) % 2;
     float c = clr * 1.0f;
 //    cout << i << " " << j << " " << c << endl;
@@ -267,23 +269,12 @@ void generate_point_buffer() {
         }
     }
 
-    ofstream pb;
-    pb.open("pb.txt");
-    if (!pb.is_open()) {
-        cerr << "Cannot write the point buffer" << endl;
-        return;
-    }
-    pb << fixed;
-    pb << setprecision(2);
-    for (const auto &v : point_buffer) {
-        for (const auto &p : v) {
-            pb << "<" << p << ">\t";
-        }
-        pb << endl;
-    }
-    pb.close();
-
     cout << "Point buffer generation done" << endl;
+}
+
+// TODO implement in a better way
+bool is_beyond_far(double t) {
+    return t >= (far - near);
 }
 
 // ray must be normalized
@@ -302,8 +293,7 @@ pdc intersect_checker_board(const vector_3d &ray, const point &ray_origin) {
     if (t < 0) {
         return default_color; // intersects behind the eye
     }
-    if (t >= far - near) {  // roughly clipping in the far region
-        // TODO clip this better
+    if (is_beyond_far(t)) {  // roughly clipping in the far region
         return default_color;
     }
 
@@ -329,7 +319,7 @@ pdc intersect_sphere(const vector_3d &ray, const point &ray_origin, const sphere
     }
     if (is_equal(discriminant, 0.0)) {
         double t = -b / (2 * a);
-        if (t < 0 or t > (far - near)) {
+        if (t < 0 or is_beyond_far(t)) {
             // behind the eye or further than far plane
             return default_color;
         }
@@ -348,8 +338,91 @@ pdc intersect_sphere(const vector_3d &ray, const point &ray_origin, const sphere
                 return default_color;
             }
         }
+        if (is_beyond_far(t0)) {
+            return default_color;
+        }
         return {t0, s.colour};
     }
+}
+
+
+// ray must be normalized
+pdc intersect_triangle(const vector_3d &ray, const point &origin,
+                       const point &v0, const point &v1, const point &v2) {
+
+    assert(is_equal(ray.length(), 1.0));
+    pdc default_color = {-1, black};
+
+    // edge vectors
+    vector_3d e1 = v1 - v0;
+    vector_3d e2 = v2 - v0;
+
+    // face normal
+    vector_3d n = e1.cross(e2).normalize();
+
+    vector_3d q = ray.cross(e2);
+    double a = e1.dot(q);
+
+    // backfacing or nearly parallel ??
+    if (is_equal(a, 0)) {
+        return default_color;
+    }
+
+    vector_3d s = (origin - v0) * (1.0 / a);
+    vector_3d r = s.cross(e1);
+
+    double b0 = s.dot(q);
+    double b1 = r.dot(ray);
+    double b2 = 1.0 - b0 - b1;
+
+    // intersected outside triangle ??
+    if (b0 < 0 or b1 < 0 or b2 < 0) {
+        return default_color;
+    }
+
+    double t = e2.dot(r);
+    if (t < 0 or is_beyond_far(t)) {
+        // outside viewing planes
+        return default_color;
+    }
+    return {t, white};
+}
+
+// ray must be normalized
+pdc intersect_pyramid(const vector_3d &ray, const point &ray_origin, const pyramid &p) {
+    assert(is_equal(ray.length(), 1.0));
+    pdc default_color = {-1, black};
+
+    vector<double> ts;
+    ts.push_back(intersect_triangle(ray, ray_origin, p.top, p.lower_right, p.lower_left).first);
+    ts.push_back(intersect_triangle(ray, ray_origin, p.top, p.lower_left, p.upper_left).first);
+    ts.push_back(intersect_triangle(ray, ray_origin, p.top, p.upper_left, p.upper_right).first);
+    ts.push_back(intersect_triangle(ray, ray_origin, p.top, p.upper_right, p.lower_right).first);
+    ts.push_back(intersect_triangle(ray, ray_origin, p.upper_right, p.lower_right, p.upper_left).first);
+    ts.push_back(intersect_triangle(ray, ray_origin, p.lower_right, p.upper_left, p.lower_left).first);
+
+    /*for (auto t : ts) {
+        cout << t << " ";
+    }
+    cout << endl;*/
+
+    sort(begin(ts), end(ts));
+    if (is_equal(ts[5], -1.0)) {
+        return default_color;
+    }
+    pdc res = default_color;
+    bool flag = false;
+    int count = 0;
+    for (auto t : ts) {
+        if (t > 0.0) count++;
+        if (t > 0.0 and !flag) {
+            res = {t, p.colour};
+            flag = true;
+        }
+    }
+//    if (count > 1) cout << "Hell yeah\n";
+
+    return res;
 }
 
 void save_image() {
@@ -387,6 +460,16 @@ void trace_rays() {
                     pixel = x;
                 }
             }
+
+            for (const auto &p : pyramids) {
+                auto x = intersect_pyramid(ray, ray_origin, p);
+                if (pixel.first < 0 and x.first > 0) {
+                    pixel = x;
+                } else if (x.first < pixel.first and x.first != -1) {
+                    pixel = x;
+                }
+            }
+
             pixels[i][j] = pixel.second;
         }
     }
@@ -537,7 +620,7 @@ void display() {
     for (const auto &p : pyramids) {
         glPushMatrix();
         glColor3f(p.colour.r, p.colour.g, p.colour.b);
-        glTranslated(p.left_lower.x, p.left_lower.y, p.left_lower.z);
+        glTranslated(p.lower_left.x, p.lower_left.y, p.lower_left.z);
         drawPyramid(p.width, p.height);
         glPopMatrix();
     }
@@ -546,6 +629,14 @@ void display() {
         glPushMatrix();
         glColor3f(1.0, 1.0, 1.0);
         glTranslated(l.position.x, l.position.y, l.position.z);
+        drawSphere(10, 32, 32);
+        glPopMatrix();
+    }
+
+    for (const auto &spotlight : spotlights) {
+        glPushMatrix();
+        glColor3f(0.0, 1.0, 0.0);
+        glTranslated(spotlight.position.x, spotlight.position.y, spotlight.position.z);
         drawSphere(10, 32, 32);
         glPopMatrix();
     }

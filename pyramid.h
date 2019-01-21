@@ -10,7 +10,7 @@
 #include "color.h"
 
 struct pyramid {
-    point left_lower{}, left_upper{}, right_lower{}, right_upper{}, top{};
+    point lower_left{}, upper_left{}, lower_right{}, upper_right{}, top{};
     double width{}, height{};
 
     color colour{};

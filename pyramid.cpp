@@ -5,11 +5,11 @@
 #include "pyramid.h"
 
 void pyramid::complete_pyramid() {
-    left_upper = right_lower = right_upper = top = left_lower;
-    left_upper.y += width;
-    right_lower.x += width;
-    right_upper.x += width;
-    right_upper.y += width;
+    upper_left = lower_right = upper_right = top = lower_left;
+    upper_left.y += width;
+    lower_right.x += width;
+    upper_right.x += width;
+    upper_right.y += width;
 
     top.x += width / 2.0;
     top.y += width / 2.0;
@@ -17,7 +17,7 @@ void pyramid::complete_pyramid() {
 }
 
 istream &operator>>(istream &stream, pyramid &s) {
-    stream >> s.left_lower;
+    stream >> s.lower_left;
     stream >> s.width >> s.height;
     stream >> s.colour.r >> s.colour.g >> s.colour.b;
     stream >> s.ambient >> s.diffuse >> s.specular >> s.reflection;
@@ -26,7 +26,7 @@ istream &operator>>(istream &stream, pyramid &s) {
 }
 
 ostream &operator<<(ostream &stream, const pyramid &p) {
-    stream << p.left_upper << p.right_upper;
-    stream << p.left_lower << p.right_lower;
-    stream << p.top;
+    stream << p.upper_left << p.upper_right << endl;
+    stream << p.lower_left << p.lower_right << endl;
+    stream << p.top << endl;
 }

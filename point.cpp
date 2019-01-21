@@ -38,6 +38,6 @@ istream &operator>>(istream &stream, point &obj) {
 }
 
 ostream &operator<<(ostream &stream, const point &obj) {
-    stream << obj.x << " " << obj.y << " " << obj.z << "";
+    stream << "<" << obj.x << " " << obj.y << " " << obj.z << "> ";
     return stream;
 }
