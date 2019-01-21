@@ -15,7 +15,6 @@ using pdc = pair<double, color>;
 
 const double EPSILON = 1.0e-7;
 
-int draw_grid;
 int draw_axes;
 
 double near, far, fov_x, fov_y, aspect_ratio;
@@ -105,20 +104,30 @@ struct camera {
 struct result {
     double t;
     color c;
+    vector_3d normal;
     vector_3d reflected_ray;
     point intersection;
 
-    result(double t, color c, vector_3d rr, point i) :
-            t(t), c(c), reflected_ray(rr), intersection(i) {
+    result(double t, color c, vector_3d n, vector_3d rr, point i) :
+            t(t), c(c), normal(n), reflected_ray(rr), intersection(i) {
     }
 
     result() {
         t = -1;
         c = {0, 0, 0};
+        normal = {0, 0, 0};
         reflected_ray = vector_3d(0, 0, 0);
         intersection = point(0, 0, 0);
     }
 
+};
+
+struct light_properties {
+    double ambient{}, diffuse{}, specular{}, reflection{};
+    double shininess{};
+
+    light_properties(double a, double d, double s, double r, double sh) :
+            ambient(a), diffuse(d), specular(s), reflection(r), shininess(sh) {}
 };
 
 inline bool is_equal(double d1, double d2) { return abs(d1 - d2) <= EPSILON; }
@@ -279,7 +288,9 @@ result intersect_checker_board(const vector_3d &ray, const point &ray_origin) {
 
     result default_result;
 
-    vector_3d normal(0, 0, 1);
+    vector_3d normal;
+    normal = ray_origin.z < 0 ? vector_3d(0, 0, -1) : vector_3d(0, 0, 1);
+
     if (normal.dot(ray) == 0) {
         return default_result; // ray is parallel to checkerboard; so no intersection point
     }
@@ -297,9 +308,8 @@ result intersect_checker_board(const vector_3d &ray, const point &ray_origin) {
     assert(is_equal(intersection.z, 0.0));
 
     color c = get_color_from_checkerboard(intersection);
-    vector_3d reflected_ray = ray.reflect({0, 0, 1});
-    result r(t, c, reflected_ray, intersection);
-//    return {t, get_color_from_checkerboard(intersection)};
+    vector_3d reflected_ray = ray.reflect(normal);
+    result r(t, c, normal, reflected_ray, intersection);
     return r;
 }
 
@@ -323,7 +333,9 @@ result intersect_sphere(const vector_3d &ray, const point &ray_origin, const sph
             return default_result;
         }
         point intersection = ray_origin + ray * t;
-        result r(t, s.colour, s.get_normal_at_point(intersection), intersection);
+        vector_3d normal = s.get_normal_at_point(intersection);
+        vector_3d rr = ray.reflect(normal);
+        result r(t, s.colour, normal, rr, intersection);
         return r;
     } else {
         double t0 = (-b + sqrt(discriminant)) / (2 * a);
@@ -342,11 +354,12 @@ result intersect_sphere(const vector_3d &ray, const point &ray_origin, const sph
             return default_result;
         }
         point intersection = ray_origin + ray * t0;
-        result r(t0, s.colour, s.get_normal_at_point(intersection), intersection);
+        vector_3d normal = s.get_normal_at_point(intersection);
+        vector_3d rr = ray.reflect(normal);
+        result r(t0, s.colour, normal, rr, intersection);
         return r;
     }
 }
-
 
 // ray must be normalized
 result intersect_triangle(const vector_3d &ray, const point &origin,
@@ -388,7 +401,8 @@ result intersect_triangle(const vector_3d &ray, const point &origin,
         return default_result;
     }
     point intersection = origin + ray * t;
-    return {t, white, n, intersection};
+    vector_3d rr = ray.reflect(n);
+    return {t, white, n, rr, intersection};
 }
 
 // ray must be normalized
@@ -419,6 +433,116 @@ result intersect_pyramid(const vector_3d &ray, const point &ray_origin, const py
     return default_result;
 }
 
+bool is_illuminates_ls(const light_source &ls, const point &intersection) {
+    vector_3d ray = ls.position - intersection;
+    double distance = ray.length();
+    ray = ray.normalize();
+    point ray_origin = intersection + ray * 0.000001;
+
+    auto res = intersect_checker_board(ray, ray_origin);
+    if (res.t > 0 and res.t < distance) {
+        cout << "Checkerboard hinders light\n";
+        return false;
+    }
+    for (const auto &s : spheres) {
+        res = intersect_sphere(ray, ray_origin, s);
+        if (res.t > 0 and res.t < distance) {
+            return false;
+        }
+    }
+
+    for (const auto &p : pyramids) {
+        res = intersect_pyramid(ray, ray_origin, p);
+        if (res.t > 0 and res.t < distance) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool is_illuminates_sp(const spotlight &sp, const point &intersection) {
+    if (!is_illuminates_ls(sp, intersection)) {
+        return false;
+    }
+    vector_3d v1 = (intersection - sp.position).normalize();
+    vector_3d v2 = sp.direction;
+    double angle = acos(v1.dot(v2)) * (180.0 / PI);
+
+    return angle <= sp.cutoff_angle;
+}
+
+pair<double, double> get_lambert_and_phong(const point &intersection, const vector_3d &normal,
+                                           const vector_3d &reflected_ray, double shininess) {
+    double lambert = 0, phong = 0;
+    for (const auto &ls : light_sources) {
+        if (!is_illuminates_ls(ls, intersection)) {
+            continue;
+        }
+        vector_3d to_source = ls.position - intersection;
+        double distance = to_source.length();
+        to_source = to_source.normalize();
+        vector_3d N = normal.normalize();
+        double scaling_factor = exp(-distance * distance * ls.fall_off);
+        lambert += to_source.dot(N) * scaling_factor;
+        vector_3d rr = reflected_ray.normalize();
+        phong += pow(rr.dot(N), shininess) * scaling_factor;
+    }
+
+    for (const auto &sp : spotlights) {
+        if (!is_illuminates_sp(sp, intersection)) {
+            continue;
+        }
+        vector_3d to_source = sp.position - intersection;
+        double distance = to_source.length();
+        to_source = to_source.normalize();
+        vector_3d N = normal.normalize();
+        double scaling_factor = exp(-distance * distance * sp.fall_off);
+        lambert += to_source.dot(N) * scaling_factor;
+        vector_3d rr = reflected_ray.normalize();
+        phong += pow(rr.dot(N), shininess) * scaling_factor;
+    }
+
+
+    return {lambert, phong};
+}
+
+color get_color_for_ray(const vector_3d &ray, const point &ray_origin) {
+    result pixel;
+
+    light_properties lp(ambient_cb, diffuse_cb, 0, reflection_cb, 0);
+
+    pixel = intersect_checker_board(ray, ray_origin);
+
+    for (const auto &s : spheres) {
+        auto x = intersect_sphere(ray, ray_origin, s);
+        if (pixel.t < 0 and x.t > 0) {
+            pixel = x;
+            lp = {s.ambient, s.diffuse, s.specular, s.reflection, s.shininess};
+        } else if (x.t < pixel.t and x.t != -1) {
+            pixel = x;
+            lp = {s.ambient, s.diffuse, s.specular, s.reflection, s.shininess};
+        }
+    }
+
+    for (const auto &p : pyramids) {
+        auto x = intersect_pyramid(ray, ray_origin, p);
+        if (pixel.t < 0 and x.t > 0) {
+            pixel = x;
+            lp = {p.ambient, p.diffuse, p.specular, p.reflection, p.shininess};
+        } else if (x.t < pixel.t and x.t != -1) {
+            pixel = x;
+            lp = {p.ambient, p.diffuse, p.specular, p.reflection, p.shininess};
+        }
+    }
+
+    auto lambert_phong = get_lambert_and_phong(pixel.intersection, pixel.normal,
+                                               pixel.reflected_ray, lp.shininess);
+    auto c = pixel.c *
+             (lp.ambient + lp.diffuse * lambert_phong.first + lp.specular * lambert_phong.second + lp.specular);
+
+    return c;
+}
+
 void save_image() {
     bitmap_image image(screen_size, screen_size);
     for (unsigned y = 0; y < screen_size; y++) {
@@ -438,34 +562,12 @@ void trace_rays() {
             static_cast<unsigned long>(screen_size)));
     for (int i = 0; i < point_buffer.size(); ++i) {
         for (int j = 0; j < point_buffer[i].size(); ++j) {
-            result pixel;
-
             point ray_origin = point_buffer[i][j];
             vector_3d ray = ray_origin - the_camera.pos;
             ray = ray.normalize();
             far_t = far / (ray.dot(the_camera.l));
 
-            pixel = intersect_checker_board(ray, ray_origin);
-
-            for (const auto &s : spheres) {
-                auto x = intersect_sphere(ray, ray_origin, s);
-                if (pixel.t < 0 and x.t > 0) {
-                    pixel = x;
-                } else if (x.t < pixel.t and x.t != -1) {
-                    pixel = x;
-                }
-            }
-
-            for (const auto &p : pyramids) {
-                auto x = intersect_pyramid(ray, ray_origin, p);
-                if (pixel.t < 0 and x.t > 0) {
-                    pixel = x;
-                } else if (x.t < pixel.t and x.t != -1) {
-                    pixel = x;
-                }
-            }
-
-            pixels[i][j] = pixel.c;
+            pixels[i][j] = get_color_for_ray(ray, ray_origin);
         }
     }
     cout << "Pixel setting done" << endl;
@@ -647,7 +749,6 @@ void animate() {
 
 void init() {
     //codes for initialization
-    draw_grid = 0;
     draw_axes = 0;
 
     //clear the screen
