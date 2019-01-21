@@ -14,6 +14,7 @@ using namespace std;
 using pdc = pair<double, color>;
 
 const double EPSILON = 1.0e-7;
+const int CHECKER_BOARD_EXPANSION = 5;
 
 int draw_axes;
 
@@ -26,6 +27,7 @@ double no_of_objects;
 double no_of_light_sources;
 double no_of_spotlights;
 double far_t, top_far_t;
+bool texture_mode;
 color black = {0, 0, 0};
 color white = {1, 1, 1};
 
@@ -35,6 +37,7 @@ vector<light_source> light_sources;
 vector<spotlight> spotlights;
 vector<vector<point>> point_buffer;
 vector<vector<color>> pixels;
+vector<vector<color>> texture;
 
 struct camera {
     point pos;
@@ -219,7 +222,7 @@ void drawPyramid(double width, double height) {
 }
 
 void drawCheckerBoard() {
-    auto no_of_boards = static_cast<int>(far * 5 / cb_width);
+    auto no_of_boards = static_cast<int>(far * CHECKER_BOARD_EXPANSION / cb_width);
     int limit = 2 * no_of_boards;
 
     float base_x = -cb_width * no_of_boards;
@@ -247,11 +250,29 @@ void drawCheckerBoard() {
 }
 
 color get_color_from_checkerboard(point intersection) {
-    auto i = static_cast<int>(floor((intersection.x + cb_width * floor(2 * far / cb_width)) / cb_width));
-    auto j = static_cast<int>(floor((cb_width * floor(2 * far / cb_width) - intersection.y) / cb_width));
+    double nb = floor(far * CHECKER_BOARD_EXPANSION / cb_width);
+    auto i = static_cast<int>(floor((intersection.x + cb_width * nb) / cb_width));
+    auto j = static_cast<int>(floor((cb_width * nb - intersection.y) / cb_width));
     int clr = (i + j) % 2;
     float c = clr * 1.0f;
-//    cout << i << " " << j << " " << c << endl;
+    if (texture_mode and clr) {
+        double baseX = -cb_width * nb;
+        double baseY = cb_width * nb;
+        double delX = intersection.x - baseX;
+        double delY = baseY - intersection.y;
+
+        double x = delX - (i * cb_width);
+        double y = delY - (j * cb_width);
+        auto height = static_cast<unsigned int>(texture[0].size());
+        auto width = static_cast<unsigned int>(texture.size());
+        auto col = static_cast<int>(round(y / cb_width * height));
+        auto row = static_cast<int>(round(x / cb_width * width));
+        if (row >= width)
+            row--;
+        if (col >= height)
+            col--;
+        return texture[row][col];
+    }
     return {c, c, c};
 }
 
@@ -583,6 +604,9 @@ void print_status(int row) {
 void trace_rays() {
     generate_point_buffer();
 
+    if (texture_mode) {
+        cout << "Rendering image with texture" << endl;
+    }
     pixels = vector<vector<color>>(static_cast<unsigned long>(screen_size), vector<color>(
             static_cast<unsigned long>(screen_size)));
     for (int i = 0; i < point_buffer.size(); ++i) {
@@ -600,6 +624,22 @@ void trace_rays() {
 
     save_image();
     cout << "Image Saved" << endl;
+}
+
+void load_texture() {
+    bitmap_image texture_image("texture.bmp");
+    unsigned height = texture_image.height();
+    unsigned width = texture_image.width();
+    texture = vector<vector<color>>(width, vector<color>(height));
+    for (unsigned i = 0; i < width; i++) {
+        for (unsigned j = 0; j < height; j++) {
+            unsigned char r, g, b;
+            texture_image.get_pixel(i, j, r, g, b);
+            color c(r / 255.0f, g / 255.0f, b / 255.0f);
+            texture[i][j] = c;
+        }
+    }
+    cout << "Texture load complete" << endl;
 }
 
 void keyboardListener(unsigned char key, int x, int y) {
@@ -624,6 +664,9 @@ void keyboardListener(unsigned char key, int x, int y) {
             break;
         case '0':
             trace_rays();
+            break;
+        case ' ':
+            texture_mode = !texture_mode;
             break;
         default:
             break;
@@ -750,7 +793,7 @@ void display() {
 
     for (const auto &l : light_sources) {
         glPushMatrix();
-        glColor3f(1.0, 0.0, 0.0);
+        glColor3f(white.r, white.g, white.b);
         glTranslated(l.position.x, l.position.y, l.position.z);
         drawSphere(5, 32, 32);
         glPopMatrix();
@@ -758,7 +801,7 @@ void display() {
 
     for (const auto &spotlight : spotlights) {
         glPushMatrix();
-        glColor3f(0.0, 1.0, 0.0);
+        glColor3f(white.r, white.g, white.b);
         glTranslated(spotlight.position.x, spotlight.position.y, spotlight.position.z);
         drawSphere(5, 32, 32);
         glPopMatrix();
@@ -777,6 +820,9 @@ void animate() {
 void init() {
     //codes for initialization
     draw_axes = 0;
+    texture_mode = false;
+
+    load_texture();
 
     //clear the screen
     glClearColor(0, 0, 0, 0);
@@ -867,7 +913,7 @@ int main(int argc, char **argv) {
     take_input();
 
     glutInit(&argc, argv);
-    glutInitWindowSize(screen_size, screen_size);
+    glutInitWindowSize(700, 700);
     glutInitWindowPosition(0, 0);
     glutInitDisplayMode(GLUT_DEPTH | GLUT_DOUBLE | GLUT_RGB); //Depth, Double buffer, RGB color
 
