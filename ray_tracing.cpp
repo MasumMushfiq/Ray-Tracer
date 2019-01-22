@@ -3,6 +3,7 @@
 #include "point.h"
 #include "sphere.h"
 #include "pyramid.h"
+#include "cube.h"
 #include "light_source.h"
 #include "spotlight.h"
 #include "bitmap_image.hpp"
@@ -33,6 +34,7 @@ color white = {1, 1, 1};
 
 vector<sphere> spheres;
 vector<pyramid> pyramids;
+vector<cube> cubes;
 vector<light_source> light_sources;
 vector<spotlight> spotlights;
 vector<vector<point>> point_buffer;
@@ -51,11 +53,19 @@ struct camera {
     }
 
     void init_camera() {
-        pos = point(20, -150, 50);
+        // looking from back
+        /*pos = point(20, -150, 50);
 
         l = vector_3d(0, 1, 0);
         u = vector_3d(0, 0, 1);
-        r = vector_3d(1, 0, 0);
+        r = vector_3d(1, 0, 0);*/
+
+        //looking from front
+        pos = {20, 350, 50};
+
+        l = {0, -1, 0};
+        u = {0, 0, 1};
+        r = {-1, 0, 0};
     }
 
     void move_forward() { pos = pos + (l * CAMERA_POSITION_MOVEMENT); }
@@ -217,6 +227,42 @@ void drawPyramid(double width, double height) {
         glVertex3d(0, 0, 0);
         glVertex3d(width, width, 0);
         glVertex3d(width, 0, 0);
+    }
+    glEnd();
+}
+
+void drawCube(double side) {
+    glBegin(GL_QUADS);
+    {
+        glVertex3d(0, 0, 0);
+        glVertex3d(0, side, 0);
+        glVertex3d(side, side, 0);
+        glVertex3d(side, 0, 0);
+
+        glVertex3d(0, 0, side);
+        glVertex3d(0, side, side);
+        glVertex3d(side, side, side);
+        glVertex3d(side, 0, side);
+
+        glVertex3d(0, 0, 0);
+        glVertex3d(0, side, 0);
+        glVertex3d(0, side, side);
+        glVertex3d(0, 0, side);
+
+        glVertex3d(side, 0, 0);
+        glVertex3d(side, side, 0);
+        glVertex3d(side, side, side);
+        glVertex3d(side, 0, side);
+
+        glVertex3d(0, 0, 0);
+        glVertex3d(side, 0, 0);
+        glVertex3d(side, 0, side);
+        glVertex3d(0, 0, side);
+
+        glVertex3d(0, side, 0);
+        glVertex3d(side, side, 0);
+        glVertex3d(side, side, side);
+        glVertex3d(0, side, side);
     }
     glEnd();
 }
@@ -443,13 +489,49 @@ result intersect_pyramid(const vector_3d &ray, const point &ray_origin, const py
 
     sort(begin(ts), end(ts), [](result r1, result r2) -> bool { return r1.t < r2.t; });
 
-    if (is_equal(ts[5].t, -1.0)) {
+    if (is_equal(ts.back().t, -1.0)) {
         return default_result;
     }
 
     for (auto t : ts) {
         if (t.t > 0.0) {
             t.c = p.colour;
+            return t;
+        }
+    }
+    return default_result;
+}
+
+// ray must be normalized
+result intersect_cube(const vector_3d &ray, const point &ray_origin, const cube &c) {
+    assert(is_equal(ray.length(), 1.0));
+    result default_result;
+
+    vector<result> ts;
+
+    ts.push_back(intersect_triangle(ray, ray_origin, c.bll, c.tul, c.tll));
+    ts.push_back(intersect_triangle(ray, ray_origin, c.bll, c.tul, c.bul));
+    ts.push_back(intersect_triangle(ray, ray_origin, c.bll, c.tlr, c.tll));
+    ts.push_back(intersect_triangle(ray, ray_origin, c.bll, c.tlr, c.blr));
+    ts.push_back(intersect_triangle(ray, ray_origin, c.bll, c.bur, c.bul));
+    ts.push_back(intersect_triangle(ray, ray_origin, c.bll, c.bur, c.blr));
+
+    ts.push_back(intersect_triangle(ray, ray_origin, c.tur, c.tll, c.tul));
+    ts.push_back(intersect_triangle(ray, ray_origin, c.tur, c.tll, c.tlr));
+    ts.push_back(intersect_triangle(ray, ray_origin, c.tur, c.bul, c.bur));
+    ts.push_back(intersect_triangle(ray, ray_origin, c.tur, c.bul, c.tul));
+    ts.push_back(intersect_triangle(ray, ray_origin, c.tur, c.blr, c.tlr));
+    ts.push_back(intersect_triangle(ray, ray_origin, c.tur, c.blr, c.bur));
+
+    sort(begin(ts), end(ts), [](result r1, result r2) -> bool { return r1.t < r2.t; });
+
+    if (is_equal(ts.back().t, -1.0)) {
+        return default_result;
+    }
+
+    for (auto t : ts) {
+        if (t.t > 0.0) {
+            t.c = c.colour;
             return t;
         }
     }
@@ -479,6 +561,14 @@ bool is_illuminates_ls(const light_source &ls, const point &intersection) {
             return false;
         }
     }
+
+    for (const auto &c : cubes) {
+        res = intersect_cube(ray, ray_origin, c);
+        if (res.t > 0 and res.t < distance) {
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -558,6 +648,17 @@ color get_color_for_ray(const vector_3d &ray, const point &ray_origin, int level
         } else if (x.t < pixel.t and x.t != -1) {
             pixel = x;
             lp = {p.ambient, p.diffuse, p.specular, p.reflection, p.shininess};
+        }
+    }
+
+    for (const auto &cu : cubes) {
+        auto x = intersect_cube(ray, ray_origin, cu);
+        if (pixel.t < 0 and x.t > 0) {
+            pixel = x;
+            lp = {cu.ambient, cu.diffuse, cu.specular, cu.reflection, cu.shininess};
+        } else if (x.t < pixel.t and x.t != -1) {
+            pixel = x;
+            lp = {cu.ambient, cu.diffuse, cu.specular, cu.reflection, cu.shininess};
         }
     }
 
@@ -791,6 +892,14 @@ void display() {
         glPopMatrix();
     }
 
+    for (const auto &c : cubes) {
+        glPushMatrix();
+        glColor3f(c.colour.r, c.colour.g, c.colour.b);
+        glTranslated(c.bll.x, c.bll.y, c.bll.z);
+        drawCube(c.side);
+        glPopMatrix();
+    }
+
     for (const auto &l : light_sources) {
         glPushMatrix();
         glColor3f(white.r, white.g, white.b);
@@ -819,7 +928,7 @@ void animate() {
 
 void init() {
     //codes for initialization
-    draw_axes = 0;
+    draw_axes = 1;
     texture_mode = false;
 
     load_texture();
@@ -878,6 +987,11 @@ void take_input() {
             description >> py;
             py.complete_pyramid();
             pyramids.push_back(py);
+        } else if (type == "cube") {
+            cube c;
+            description >> c;
+            c.complete_cube();
+            cubes.push_back(c);
         } else {
             cerr << "Unknown object\n";
             exit(EXIT_FAILURE);

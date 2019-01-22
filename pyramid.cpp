@@ -29,4 +29,5 @@ ostream &operator<<(ostream &stream, const pyramid &p) {
     stream << p.upper_left << p.upper_right << endl;
     stream << p.lower_left << p.lower_right << endl;
     stream << p.top << endl;
+    return stream;
 }
