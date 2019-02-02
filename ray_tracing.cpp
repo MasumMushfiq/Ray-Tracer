@@ -13,17 +13,15 @@
 
 using namespace std;
 
-using pdc = pair<double, color>;
-
 const double EPSILON = 1.0e-7;
-const int CHECKER_BOARD_EXPANSION = 5;
+const double CHECKER_BOARD_EXPANSION = 1.25;
 
-int draw_axes;
+bool draw_axes;
 
 double near, far, fov_x, fov_y, aspect_ratio;
 int level_of_recursion;
 unsigned screen_size;
-float cb_width;
+double cb_width;
 double ambient_cb, diffuse_cb, reflection_cb;
 double no_of_objects;
 double no_of_light_sources;
@@ -32,6 +30,7 @@ double far_t, top_far_t;
 bool texture_mode, texture_loaded;
 color black = {0, 0, 0};
 color white = {1, 1, 1};
+color background = black;
 
 vector<sphere> spheres;
 vector<pyramid> pyramids;
@@ -154,20 +153,22 @@ void take_input() {
 }
 
 void drawAxes() {
-    if (draw_axes == 1) {
-        glColor3f(1, 0, 0);
+    if (draw_axes) {
+        glColor3f(0, 1, 0);
+        glLineWidth(2.0);
         glBegin(GL_LINES);
         {
-            glVertex3f(1000, 0, 0);
-            glVertex3f(-1000, 0, 0);
+            glVertex3f(10000, 0, 0);
+            glVertex3f(-10000, 0, 0);
 
-            glVertex3f(0, -1000, 0);
-            glVertex3f(0, 1000, 0);
+            glVertex3f(0, -10000, 0);
+            glVertex3f(0, 10000, 0);
 
-            glVertex3f(0, 0, 1000);
-            glVertex3f(0, 0, -1000);
+            glVertex3f(0, 0, 10000);
+            glVertex3f(0, 0, -10000);
         }
         glEnd();
+        glLineWidth(1.0);
     }
 }
 
@@ -245,7 +246,7 @@ void drawLightSource(double radius, int slices, int stacks) {
 void drawSpotLight(double radius, double height, int segments) {
     int i;
     double shade;
-    struct point points[100];
+    point points[100];
     //generate points
     for (i = 0; i <= segments; i++) {
         points[i].x = radius * cos(((double) i / (double) segments) * 2 * PI);
@@ -256,13 +257,13 @@ void drawSpotLight(double radius, double height, int segments) {
         //create shading effect
         if (i < segments / 2)shade = 2 * (double) i / (double) segments;
         else shade = 2 * (1.0 - (double) i / (double) segments);
-        glColor3f(shade, shade, shade);
+        glColor3d(shade, shade, shade);
 
         glBegin(GL_TRIANGLES);
         {
-            glVertex3f(0, 0, height);
-            glVertex3f(points[i].x, points[i].y, 0);
-            glVertex3f(points[i + 1].x, points[i + 1].y, 0);
+            glVertex3d(0, 0, height);
+            glVertex3d(points[i].x, points[i].y, 0);
+            glVertex3d(points[i + 1].x, points[i + 1].y, 0);
         }
         glEnd();
     }
@@ -338,24 +339,39 @@ void drawCheckerBoard() {
     auto no_of_boards = static_cast<int>(far * CHECKER_BOARD_EXPANSION / cb_width);
     int limit = 2 * no_of_boards;
 
-    float base_x = -cb_width * no_of_boards;
-    float base_y = cb_width * no_of_boards;
+    double base_x = -cb_width * no_of_boards;
+    double base_y = cb_width * no_of_boards;
+
+    double bx = floor(abs(the_camera.pos.x) / (2 * cb_width));
+    double by = floor(abs(the_camera.pos.y) / (2 * cb_width));
+
+    if (the_camera.pos.x < 0) {
+        base_x -= bx * 2 * cb_width;
+    } else {
+        base_x += bx * 2 * cb_width;
+    }
+
+    if (the_camera.pos.y < 0) {
+        base_y -= by * 2 * cb_width;
+    } else {
+        base_y += by * 2 * cb_width;
+    }
 
     for (int i = 0; i < limit; ++i) {
-        float y = base_y - i * cb_width;
+        double y = base_y - i * cb_width;
 
         for (int j = 0; j < limit; ++j) {
-            float x = base_x + j * cb_width;
+            double x = base_x + j * cb_width;
 
-            float a = cb_width;
-            float clr = (i + j) % 2;
-            glColor3f(clr, clr, clr);
+            double a = cb_width;
+            double clr = (i + j) % 2;
+            glColor3d(clr, clr, clr);
             glBegin(GL_QUADS);
             {
-                glVertex3f(x, y, 0);
-                glVertex3f(x + a, y, 0);
-                glVertex3f(x + a, y - a, 0);
-                glVertex3f(x, y - a, 0);
+                glVertex3d(x, y, 0);
+                glVertex3d(x + a, y, 0);
+                glVertex3d(x + a, y - a, 0);
+                glVertex3d(x, y - a, 0);
             }
             glEnd();
         }
@@ -529,6 +545,9 @@ result intersect_triangle(const vector_3d &ray, const point &origin,
 
     // face normal
     vector_3d n = e1.cross(e2).get_direction_vector();
+    if (n.angle_3d(ray) < 90) {
+        n = n * (-1);
+    }
 
     vector_3d q = ray.cross(e2);
     double a = e1.dot(q);
@@ -708,7 +727,7 @@ pair<double, double> get_lambert_and_phong(const point &intersection, const vect
 
 color get_color_for_ray(const vector_3d &ray, const point &ray_origin, int level) {
     if (level == 0) {
-        return black;
+        return background;
     }
 
     result pixel;
@@ -754,7 +773,7 @@ color get_color_for_ray(const vector_3d &ray, const point &ray_origin, int level
     double lambert = 0.0, phong = 0.0;
 
     far_t = top_far_t - pixel.t;
-    color reflected_color = black;
+    color reflected_color = background;
     if (pixel.t > 0.0) {
         lambert_phong = get_lambert_and_phong(pixel.intersection, pixel.normal,
                                               pixel.reflected_ray, lp.shininess);
@@ -803,7 +822,7 @@ void trace_rays() {
         for (int j = 0; j < point_buffer[i].size(); ++j) {
             point ray_origin = point_buffer[i][j];
             vector_3d ray = ray_origin - the_camera.pos;
-            ray = ray.get_direction_vector();
+            ray.normalize();
             top_far_t = far / (ray.dot(the_camera.l));
             far_t = top_far_t;
 
@@ -881,7 +900,7 @@ void keyboardListener(unsigned char key, int x, int y) {
             the_camera.tilt_counterclockwise();
             break;
         case '0':
-            if (!texture_loaded and texture_mode) {
+            if (texture_mode and !texture_loaded) {
                 load_texture();
             }
             trace_rays();
@@ -936,8 +955,7 @@ void mouseListener(int button, int state, int x, int y) { //x, y is the x-y of t
     switch (button) {
         case GLUT_LEFT_BUTTON:
             if (state == GLUT_DOWN) { // 2 times?? in ONE click? -- solution is checking DOWN or UP
-                draw_axes = 1 - draw_axes;
-
+                draw_axes = !draw_axes;
             }
             break;
 
@@ -962,7 +980,7 @@ void display() {
     {
         //clear the display
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        glClearColor(0, 0, 0, 0); //color black
+        glClearColor(background.r, background.g, background.b, 0); //color black
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         /********************
@@ -1055,14 +1073,14 @@ void animate() {
 
 void init() {
     //codes for initialization
-    draw_axes = 1;
+    draw_axes = true;
     texture_mode = false;
     texture_loaded = false;
 
-    //load_texture();
 
     //clear the screen
-    glClearColor(0, 0, 0, 0);
+    glClearColor(background.r, background.g, background.b, 0);
+//    glClearColor(0, 0, 0, 0);
 //    glClearColor(1.0, 1.0, 1.0, 1.0);
     glEnable(GL_POINT_SMOOTH);
     glEnable(GL_LINE_SMOOTH);

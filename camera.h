@@ -15,12 +15,13 @@ struct camera {
     const int CAMERA_ANGLE_MOVEMENT = 5;   // degree to rotate
 
     camera() {
-        init_camera();
+        initialize_camera();
     }
 
-    void init_camera() {
+private:
+    void initialize_camera() {
         // looking from back
-        pos = point(20, -150, 50);
+        pos = point(0, -150, 50);
 
         l = vector_3d(0, 1, 0);
         u = vector_3d(0, 0, 1);
@@ -34,6 +35,7 @@ struct camera {
         r = {-1, 0, 0};*/
     }
 
+public:
     void move_forward() { pos = pos + (l * CAMERA_POSITION_MOVEMENT); }
 
     void move_backward() { pos = pos + (l * (-1) * CAMERA_POSITION_MOVEMENT); }
@@ -76,7 +78,8 @@ struct camera {
         r = r.rotate_3d(CAMERA_ANGLE_MOVEMENT, l);
     }
 
-    void reset() { init_camera(); }
+    void reset() { initialize_camera(); }
 
 };
+
 #endif //OFFLINE4_CAMERA_H
