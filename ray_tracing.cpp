@@ -1,6 +1,7 @@
 #include <bits/stdc++.h>
 #include "vector_3d.h"
 #include "point.h"
+#include "camera.h"
 #include "sphere.h"
 #include "pyramid.h"
 #include "cube.h"
@@ -28,7 +29,7 @@ double no_of_objects;
 double no_of_light_sources;
 double no_of_spotlights;
 double far_t, top_far_t;
-bool texture_mode;
+bool texture_mode, texture_loaded;
 color black = {0, 0, 0};
 color white = {1, 1, 1};
 
@@ -39,80 +40,10 @@ vector<light_source> light_sources;
 vector<spotlight> spotlights;
 vector<vector<point>> point_buffer;
 vector<vector<color>> pixels;
-vector<vector<color>> texture;
+vector<vector<color>> texture_white;
+vector<vector<color>> texture_black;
 
-struct camera {
-    point pos;
-    vector_3d u, r, l;
-
-    const int CAMERA_POSITION_MOVEMENT = 5; // unit co-ordinate change
-    const int CAMERA_ANGLE_MOVEMENT = 5;   // degree to rotate
-
-    camera() {
-        init_camera();
-    }
-
-    void init_camera() {
-        // looking from back
-        /*pos = point(20, -150, 50);
-
-        l = vector_3d(0, 1, 0);
-        u = vector_3d(0, 0, 1);
-        r = vector_3d(1, 0, 0);*/
-
-        //looking from front
-        pos = {20, 350, 50};
-
-        l = {0, -1, 0};
-        u = {0, 0, 1};
-        r = {-1, 0, 0};
-    }
-
-    void move_forward() { pos = pos + (l * CAMERA_POSITION_MOVEMENT); }
-
-    void move_backward() { pos = pos + (l * (-1) * CAMERA_POSITION_MOVEMENT); }
-
-    void move_right() { pos = pos + (r * CAMERA_POSITION_MOVEMENT); }
-
-    void move_left() { pos = pos + (r * (-1) * CAMERA_POSITION_MOVEMENT); }
-
-    void move_up() { pos = pos + (u * CAMERA_POSITION_MOVEMENT); }
-
-    void move_down() { pos = pos + (u * (-1) * CAMERA_POSITION_MOVEMENT); }
-
-    void look_left() {
-        r = r.rotate_3d(CAMERA_ANGLE_MOVEMENT, u);
-        l = l.rotate_3d(CAMERA_ANGLE_MOVEMENT, u);
-    }
-
-    void look_right() {
-        r = r.rotate_3d(-CAMERA_ANGLE_MOVEMENT, u);
-        l = l.rotate_3d(-CAMERA_ANGLE_MOVEMENT, u);
-    }
-
-    void look_up() {
-        u = u.rotate_3d(CAMERA_ANGLE_MOVEMENT, r);
-        l = l.rotate_3d(CAMERA_ANGLE_MOVEMENT, r);
-    }
-
-    void look_down() {
-        u = u.rotate_3d(-CAMERA_ANGLE_MOVEMENT, r);
-        l = l.rotate_3d(-CAMERA_ANGLE_MOVEMENT, r);
-    }
-
-    void tilt_clockwise() {
-        u = u.rotate_3d(-CAMERA_ANGLE_MOVEMENT, l);
-        r = r.rotate_3d(-CAMERA_ANGLE_MOVEMENT, l);
-    }
-
-    void tilt_counterclockwise() {
-        u = u.rotate_3d(CAMERA_ANGLE_MOVEMENT, l);
-        r = r.rotate_3d(CAMERA_ANGLE_MOVEMENT, l);
-    }
-
-    void reset() { init_camera(); }
-
-} the_camera;
+camera the_camera;
 
 struct result {
     double t;
@@ -147,6 +78,80 @@ struct light_properties {
 };
 
 inline bool is_equal(double d1, double d2) { return abs(d1 - d2) <= EPSILON; }
+
+void clear_input() {
+    spheres.clear();
+    pyramids.clear();
+    cubes.clear();
+    light_sources.clear();
+    spotlights.clear();
+}
+
+void take_input() {
+    ifstream description;
+    description.open("description.txt");
+    if (!description.is_open()) {
+        cerr << "Cannot find description file" << endl;
+        exit(EXIT_FAILURE);
+    }
+
+    description >> near >> far >> fov_y >> aspect_ratio;
+    description >> level_of_recursion >> screen_size;
+    description >> cb_width;
+    description >> ambient_cb >> diffuse_cb >> reflection_cb;
+    description >> no_of_objects;
+
+    fov_x = fov_y * aspect_ratio;
+
+    assert(ambient_cb + diffuse_cb + reflection_cb == 1.0);
+
+    for (int i = 0; i < no_of_objects; ++i) {
+        string type;
+        description >> type;
+        if (type == "sphere") {
+            sphere sp;
+            description >> sp;
+            spheres.push_back(sp);
+        } else if (type == "pyramid") {
+            pyramid py;
+            description >> py;
+            py.complete_pyramid();
+            pyramids.push_back(py);
+        } else if (type == "cube") {
+            cube c;
+            description >> c;
+            c.complete_cube();
+            cubes.push_back(c);
+        } else {
+            cerr << "Unknown object\n";
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    description >> no_of_light_sources;
+
+    for (int j = 0; j < no_of_light_sources; ++j) {
+        point p;
+        double fall_off;
+        description >> p >> fall_off;
+        light_sources.emplace_back(p, fall_off);
+    }
+
+    description >> no_of_spotlights;
+
+    for (int k = 0; k < no_of_spotlights; ++k) {
+        point pos, looking_at;
+        double fall_off, angle;
+
+        description >> pos >> fall_off;
+        description >> looking_at >> angle;
+
+        spotlights.emplace_back(pos, fall_off, looking_at, angle);
+    }
+
+
+    cout << "Done taking input" << endl;
+}
 
 void drawAxes() {
     if (draw_axes == 1) {
@@ -198,6 +203,68 @@ void drawSphere(double radius, int slices, int stacks) {
             }
             glEnd();
         }
+    }
+}
+
+void drawLightSource(double radius, int slices, int stacks) {
+    struct point points[100][100];
+    int i, j;
+    double h, r;
+    //generate points
+    for (i = 0; i <= stacks; i++) {
+        h = radius * sin(((double) i / (double) stacks) * (PI / 2));
+        r = radius * cos(((double) i / (double) stacks) * (PI / 2));
+        for (j = 0; j <= slices; j++) {
+            points[i][j].x = r * cos(((double) j / (double) slices) * 2 * PI);
+            points[i][j].y = r * sin(((double) j / (double) slices) * 2 * PI);
+            points[i][j].z = h;
+        }
+    }
+    //draw quads using generated points
+    for (i = 0; i < stacks; i++) {
+        glColor3d((double) i / (double) stacks, (double) i / (double) stacks, (double) i / (double) stacks);
+        for (j = 0; j < slices; j++) {
+            glBegin(GL_QUADS);
+            {
+                //upper hemisphere
+                glVertex3d(points[i][j].x, points[i][j].y, points[i][j].z);
+                glVertex3d(points[i][j + 1].x, points[i][j + 1].y, points[i][j + 1].z);
+                glVertex3d(points[i + 1][j + 1].x, points[i + 1][j + 1].y, points[i + 1][j + 1].z);
+                glVertex3d(points[i + 1][j].x, points[i + 1][j].y, points[i + 1][j].z);
+                //lower hemisphere
+                glVertex3d(points[i][j].x, points[i][j].y, -points[i][j].z);
+                glVertex3d(points[i][j + 1].x, points[i][j + 1].y, -points[i][j + 1].z);
+                glVertex3d(points[i + 1][j + 1].x, points[i + 1][j + 1].y, -points[i + 1][j + 1].z);
+                glVertex3d(points[i + 1][j].x, points[i + 1][j].y, -points[i + 1][j].z);
+            }
+            glEnd();
+        }
+    }
+}
+
+void drawSpotLight(double radius, double height, int segments) {
+    int i;
+    double shade;
+    struct point points[100];
+    //generate points
+    for (i = 0; i <= segments; i++) {
+        points[i].x = radius * cos(((double) i / (double) segments) * 2 * PI);
+        points[i].y = radius * sin(((double) i / (double) segments) * 2 * PI);
+    }
+    //draw triangles using generated points
+    for (i = 0; i < segments; i++) {
+        //create shading effect
+        if (i < segments / 2)shade = 2 * (double) i / (double) segments;
+        else shade = 2 * (1.0 - (double) i / (double) segments);
+        glColor3f(shade, shade, shade);
+
+        glBegin(GL_TRIANGLES);
+        {
+            glVertex3f(0, 0, height);
+            glVertex3f(points[i].x, points[i].y, 0);
+            glVertex3f(points[i + 1].x, points[i + 1].y, 0);
+        }
+        glEnd();
     }
 }
 
@@ -301,23 +368,36 @@ color get_color_from_checkerboard(point intersection) {
     auto j = static_cast<int>(floor((cb_width * nb - intersection.y) / cb_width));
     int clr = (i + j) % 2;
     float c = clr * 1.0f;
-    if (texture_mode and clr) {
-        double baseX = -cb_width * nb;
-        double baseY = cb_width * nb;
-        double delX = intersection.x - baseX;
-        double delY = baseY - intersection.y;
 
-        double x = delX - (i * cb_width);
-        double y = delY - (j * cb_width);
-        auto height = static_cast<unsigned int>(texture[0].size());
-        auto width = static_cast<unsigned int>(texture.size());
-        auto col = static_cast<int>(round(y / cb_width * height));
-        auto row = static_cast<int>(round(x / cb_width * width));
-        if (row >= width)
-            row--;
-        if (col >= height)
-            col--;
-        return texture[row][col];
+    double baseX = -cb_width * nb;
+    double baseY = cb_width * nb;
+    double delX = intersection.x - baseX;
+    double delY = baseY - intersection.y;
+    double x = delX - (i * cb_width);
+    double y = delY - (j * cb_width);
+
+    if (texture_mode and texture_loaded) {
+        if (clr) {
+            auto height = static_cast<unsigned int>(texture_white[0].size());
+            auto width = static_cast<unsigned int>(texture_white.size());
+            auto col = static_cast<int>(round(y / cb_width * height));
+            auto row = static_cast<int>(round(x / cb_width * width));
+            if (row >= width)
+                row--;
+            if (col >= height)
+                col--;
+            return texture_white[row][col];
+        } else {
+            auto height = static_cast<unsigned int>(texture_black[0].size());
+            auto width = static_cast<unsigned int>(texture_black.size());
+            auto col = static_cast<int>(round(y / cb_width * height));
+            auto row = static_cast<int>(round(x / cb_width * width));
+            if (row >= width)
+                row--;
+            if (col >= height)
+                col--;
+            return texture_black[row][col];
+        }
     }
     return {c, c, c};
 }
@@ -403,29 +483,35 @@ result intersect_sphere(const vector_3d &ray, const point &ray_origin, const sph
         }
         point intersection = ray_origin + ray * t;
         vector_3d normal = s.get_normal_at_point(intersection);
+        if (s.is_inside(ray_origin)) {
+            normal = normal * -1;
+        }
         vector_3d rr = ray.reflect(normal);
         result r(t, s.colour, normal, rr, intersection);
         return r;
     } else {
-        double t0 = (-b + sqrt(discriminant)) / (2 * a);
+        double t = (-b + sqrt(discriminant)) / (2 * a);
         double t1 = (-b - sqrt(discriminant)) / (2 * a);
-        if (t0 > t1) {
-            swap(t0, t1);
+        if (t > t1) {
+            swap(t, t1);
         }
-        if (t0 < 0) {
-            t0 = t1;
-            if (t0 < 0) {
+        if (t < 0) {
+            t = t1;
+            if (t < 0) {
                 // both are behind the eye
                 return default_result;
             }
         }
-        if (is_beyond_far(t0)) {
+        if (is_beyond_far(t)) {
             return default_result;
         }
-        point intersection = ray_origin + ray * t0;
+        point intersection = ray_origin + ray * t;
         vector_3d normal = s.get_normal_at_point(intersection);
+        if (s.is_inside(ray_origin)) {
+            normal = normal * -1;
+        }
         vector_3d rr = ray.reflect(normal);
-        result r(t0, s.colour, normal, rr, intersection);
+        result r(t, s.colour, normal, rr, intersection);
         return r;
     }
 }
@@ -442,7 +528,7 @@ result intersect_triangle(const vector_3d &ray, const point &origin,
     vector_3d e2 = v2 - v0;
 
     // face normal
-    vector_3d n = e1.cross(e2).normalize();
+    vector_3d n = e1.cross(e2).get_direction_vector();
 
     vector_3d q = ray.cross(e2);
     double a = e1.dot(q);
@@ -538,10 +624,10 @@ result intersect_cube(const vector_3d &ray, const point &ray_origin, const cube 
     return default_result;
 }
 
-bool is_illuminates_ls(const light_source &ls, const point &intersection) {
+bool is_illuminated_by_ls(const light_source &ls, const point &intersection) {
     vector_3d ray = ls.position - intersection;
     double distance = ray.length();
-    ray = ray.normalize();
+    ray = ray.get_direction_vector();
     point ray_origin = intersection + ray * 0.000001;
 
     auto res = intersect_checker_board(ray, ray_origin);
@@ -572,11 +658,11 @@ bool is_illuminates_ls(const light_source &ls, const point &intersection) {
     return true;
 }
 
-bool is_illuminates_sp(const spotlight &sp, const point &intersection) {
-    if (!is_illuminates_ls(sp, intersection)) {
+bool is_illuminated_by_sp(const spotlight &sp, const point &intersection) {
+    if (!is_illuminated_by_ls(sp, intersection)) {
         return false;
     }
-    vector_3d v1 = (intersection - sp.position).normalize();
+    vector_3d v1 = (intersection - sp.position).get_direction_vector();
     vector_3d v2 = sp.direction;
     double angle = acos(v1.dot(v2)) * (180.0 / PI);
 
@@ -587,33 +673,35 @@ pair<double, double> get_lambert_and_phong(const point &intersection, const vect
                                            const vector_3d &reflected_ray, double shininess) {
     double lambert = 0, phong = 0;
     for (const auto &ls : light_sources) {
-        if (!is_illuminates_ls(ls, intersection)) {
+        if (!is_illuminated_by_ls(ls, intersection)) {
             continue;
         }
         vector_3d to_source = ls.position - intersection;
         double distance = to_source.length();
-        to_source = to_source.normalize();
-        vector_3d N = normal.normalize();
+        to_source.normalize();
+        vector_3d N = normal.get_direction_vector();
         double scaling_factor = exp(-distance * distance * ls.fall_off);
         lambert += to_source.dot(N) * scaling_factor;
-        vector_3d rr = reflected_ray.normalize();
+        vector_3d rr = reflected_ray.get_direction_vector();
         phong += pow(rr.dot(N), shininess) * scaling_factor;
     }
 
     for (const auto &sp : spotlights) {
-        if (!is_illuminates_sp(sp, intersection)) {
+        if (!is_illuminated_by_sp(sp, intersection)) {
             continue;
         }
         vector_3d to_source = sp.position - intersection;
         double distance = to_source.length();
-        to_source = to_source.normalize();
-        vector_3d N = normal.normalize();
+        to_source = to_source.get_direction_vector();
+        vector_3d N = normal.get_direction_vector();
         double scaling_factor = exp(-distance * distance * sp.fall_off);
         lambert += to_source.dot(N) * scaling_factor;
-        vector_3d rr = reflected_ray.normalize();
+        vector_3d rr = reflected_ray.get_direction_vector();
         phong += pow(rr.dot(N), shininess) * scaling_factor;
     }
 
+    if (lambert > 1) lambert = 1;
+    if (phong > 1) phong = 1;
 
     return {lambert, phong};
 }
@@ -686,9 +774,10 @@ void save_image() {
     bitmap_image image(screen_size, screen_size);
     for (unsigned y = 0; y < screen_size; y++) {
         for (unsigned x = 0; x < screen_size; x++) {
-            image.set_pixel(x, y, static_cast<const unsigned char>(pixels[y][x].r * 255),
-                            static_cast<const unsigned char>(pixels[y][x].g * 255),
-                            static_cast<const unsigned char>(pixels[y][x].b * 255));
+            color c = pixels[y][x] * 255;
+            image.set_pixel(x, y, static_cast<const unsigned char>(c.r),
+                            static_cast<const unsigned char>(c.g),
+                            static_cast<const unsigned char>(c.b));
         }
     }
     image.save_image("out.bmp");
@@ -705,7 +794,7 @@ void print_status(int row) {
 void trace_rays() {
     generate_point_buffer();
 
-    if (texture_mode) {
+    if (texture_mode and texture_loaded) {
         cout << "Rendering image with texture" << endl;
     }
     pixels = vector<vector<color>>(static_cast<unsigned long>(screen_size), vector<color>(
@@ -714,7 +803,7 @@ void trace_rays() {
         for (int j = 0; j < point_buffer[i].size(); ++j) {
             point ray_origin = point_buffer[i][j];
             vector_3d ray = ray_origin - the_camera.pos;
-            ray = ray.normalize();
+            ray = ray.get_direction_vector();
             top_far_t = far / (ray.dot(the_camera.l));
             far_t = top_far_t;
 
@@ -727,20 +816,48 @@ void trace_rays() {
     cout << "Image Saved" << endl;
 }
 
+inline bool exist(const string &name) {
+    ifstream f(name.c_str());
+    return f.good();
+}
+
 void load_texture() {
-    bitmap_image texture_image("texture.bmp");
-    unsigned height = texture_image.height();
-    unsigned width = texture_image.width();
-    texture = vector<vector<color>>(width, vector<color>(height));
-    for (unsigned i = 0; i < width; i++) {
-        for (unsigned j = 0; j < height; j++) {
-            unsigned char r, g, b;
-            texture_image.get_pixel(i, j, r, g, b);
-            color c(r / 255.0f, g / 255.0f, b / 255.0f);
-            texture[i][j] = c;
+    try {
+        if (!exist("texture_w.bmp") or !exist("texture_b.bmp")) {
+            throw string("Bitmap image not found");
         }
+        bitmap_image texture_image_white("texture_w.bmp");
+        bitmap_image texture_image_black("texture_b.bmp");
+        unsigned height = texture_image_white.height();
+        unsigned width = texture_image_white.width();
+        texture_white = vector<vector<color>>(width, vector<color>(height));
+        for (unsigned i = 0; i < width; i++) {
+            for (unsigned j = 0; j < height; j++) {
+                unsigned char r, g, b;
+                texture_image_white.get_pixel(i, j, r, g, b);
+                color c(r / 255.0f, g / 255.0f, b / 255.0f);
+                texture_white[i][j] = c;
+            }
+        }
+
+        height = texture_image_black.height();
+        width = texture_image_black.width();
+        texture_black = vector<vector<color>>(width, vector<color>(height));
+        for (unsigned i = 0; i < width; i++) {
+            for (unsigned j = 0; j < height; j++) {
+                unsigned char r, g, b;
+                texture_image_black.get_pixel(i, j, r, g, b);
+                color c(r / 255.0f, g / 255.0f, b / 255.0f);
+                texture_black[i][j] = c;
+            }
+        }
+        texture_loaded = true;
+
+        cout << "Texture load complete" << endl;
+    } catch (string &e) {
+        cout << e << endl;
+        texture_loaded = false;
     }
-    cout << "Texture load complete" << endl;
 }
 
 void keyboardListener(unsigned char key, int x, int y) {
@@ -764,6 +881,9 @@ void keyboardListener(unsigned char key, int x, int y) {
             the_camera.tilt_counterclockwise();
             break;
         case '0':
+            if (!texture_loaded and texture_mode) {
+                load_texture();
+            }
             trace_rays();
             break;
         case ' ':
@@ -798,6 +918,8 @@ void specialKeyListener(int key, int x, int y) {
             break;
 
         case GLUT_KEY_INSERT:
+            clear_input();
+            take_input();
             break;
 
         case GLUT_KEY_HOME:
@@ -814,7 +936,7 @@ void mouseListener(int button, int state, int x, int y) { //x, y is the x-y of t
     switch (button) {
         case GLUT_LEFT_BUTTON:
             if (state == GLUT_DOWN) { // 2 times?? in ONE click? -- solution is checking DOWN or UP
-                //draw_axes = 1 - draw_axes;
+                draw_axes = 1 - draw_axes;
 
             }
             break;
@@ -874,13 +996,15 @@ void display() {
 
     drawAxes();
 
-    drawCheckerBoard();
+    if (!texture_mode) {
+        drawCheckerBoard();
+    }
 
     for (const auto &s : spheres) {
         glPushMatrix();
         glColor3f(s.colour.r, s.colour.g, s.colour.b);
         glTranslated(s.center.x, s.center.y, s.center.z);
-        drawSphere(s.radius, 32, 32);
+        drawSphere(s.radius, 64, 64);
         glPopMatrix();
     }
 
@@ -904,7 +1028,7 @@ void display() {
         glPushMatrix();
         glColor3f(white.r, white.g, white.b);
         glTranslated(l.position.x, l.position.y, l.position.z);
-        drawSphere(5, 32, 32);
+        drawLightSource(5, 16, 16);
         glPopMatrix();
     }
 
@@ -912,7 +1036,10 @@ void display() {
         glPushMatrix();
         glColor3f(white.r, white.g, white.b);
         glTranslated(spotlight.position.x, spotlight.position.y, spotlight.position.z);
-        drawSphere(5, 32, 32);
+        auto axis = vector_3d(0, 0, 1).cross(spotlight.direction).get_direction_vector();
+        auto angle3d = vector_3d(0, 0, 1).angle_3d(spotlight.direction);
+        glRotated(angle3d, axis.i, axis.j, axis.k);
+        drawSpotLight(5, 32, 32);
         glPopMatrix();
     }
 
@@ -930,8 +1057,9 @@ void init() {
     //codes for initialization
     draw_axes = 1;
     texture_mode = false;
+    texture_loaded = false;
 
-    load_texture();
+    //load_texture();
 
     //clear the screen
     glClearColor(0, 0, 0, 0);
@@ -955,72 +1083,6 @@ void init() {
     //aspect ratio that determines the field of view in the X direction (horizontally)
     //near distance
     //far distance
-}
-
-void take_input() {
-    ifstream description;
-    description.open("description.txt");
-    if (!description.is_open()) {
-        cerr << "Cannot find description file" << endl;
-        exit(EXIT_FAILURE);
-    }
-
-    description >> near >> far >> fov_y >> aspect_ratio;
-    description >> level_of_recursion >> screen_size;
-    description >> cb_width;
-    description >> ambient_cb >> diffuse_cb >> reflection_cb;
-    description >> no_of_objects;
-
-    fov_x = fov_y * aspect_ratio;
-
-    assert(ambient_cb + diffuse_cb + reflection_cb == 1.0);
-
-    for (int i = 0; i < no_of_objects; ++i) {
-        string type;
-        description >> type;
-        if (type == "sphere") {
-            sphere sp;
-            description >> sp;
-            spheres.push_back(sp);
-        } else if (type == "pyramid") {
-            pyramid py;
-            description >> py;
-            py.complete_pyramid();
-            pyramids.push_back(py);
-        } else if (type == "cube") {
-            cube c;
-            description >> c;
-            c.complete_cube();
-            cubes.push_back(c);
-        } else {
-            cerr << "Unknown object\n";
-            exit(EXIT_FAILURE);
-        }
-    }
-
-    description >> no_of_light_sources;
-
-    for (int j = 0; j < no_of_light_sources; ++j) {
-        point p;
-        double fall_off;
-        description >> p >> fall_off;
-        light_sources.emplace_back(p, fall_off);
-    }
-
-    description >> no_of_spotlights;
-
-    for (int k = 0; k < no_of_spotlights; ++k) {
-        point pos, looking_at;
-        double fall_off, angle;
-
-        description >> pos >> fall_off;
-        description >> looking_at >> angle;
-
-        spotlights.emplace_back(pos, fall_off, looking_at, angle);
-    }
-
-
-    cout << "Done taking input" << endl;
 }
 
 int main(int argc, char **argv) {

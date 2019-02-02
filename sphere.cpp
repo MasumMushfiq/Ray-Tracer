@@ -10,7 +10,7 @@
 istream &operator>>(istream &stream, sphere &s) {
     stream >> s.center;
     stream >> s.radius;
-    stream >> s.colour.r >> s.colour.g >> s.colour.b;
+    stream >> s.colour;
     stream >> s.ambient >> s.diffuse >> s.specular >> s.reflection;
     stream >> s.shininess;
     return stream;
@@ -24,5 +24,9 @@ ostream &operator<<(ostream &stream, const sphere &s) {
 vector_3d sphere::get_normal_at_point(const point &p) const{
     assert(abs(center.get_distance(p) - radius) <= 1.0e-7);
 
-    return (p - center).normalize();
+    return (p - center).get_direction_vector();
+}
+
+bool sphere::is_inside(const point &p) const {
+    return p.get_distance(center) < radius;
 }

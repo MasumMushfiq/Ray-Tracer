@@ -30,7 +30,8 @@ public:
 
     double length() const;
 
-    vector_3d normalize() const;
+    vector_3d get_direction_vector() const;
+    void normalize();
 
     double angle_2d(vector_3d another) const; // angle considering only x and y
     double angle_3d(vector_3d another) const; // angle between two vectors in degree
@@ -49,7 +50,7 @@ public:
 
     vector_3d operator-(const vector_3d &another) const;
 
-    vector_3d operator*(const double m) const;
+    vector_3d operator*(double m) const;
 };
 
 #endif

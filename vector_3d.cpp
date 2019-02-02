@@ -60,7 +60,7 @@ double vector_3d::length() const {
     return sqrt(i * i + j * j + k * k);
 }
 
-vector_3d vector_3d::normalize() const {
+vector_3d vector_3d::get_direction_vector() const {
     double l = length();
     assert(abs(l - 0.0) > 1e-9);    // length not zero
     double x = i / l;
@@ -78,8 +78,8 @@ double vector_3d::angle_2d(vector_3d another) const {
 }
 
 double vector_3d::angle_3d(vector_3d another) const {
-    vector_3d a = normalize();
-    vector_3d b = another.normalize();
+    vector_3d a = get_direction_vector();
+    vector_3d b = another.get_direction_vector();
     double dot_val = a.dot(b);
     double radian_angle = acos(dot_val);
     return radian_angle * 180 / PI;
@@ -112,14 +112,14 @@ vector_3d vector_3d::rotate_2d(double angle_degree) const {
 
 vector_3d vector_3d::rotate_3d(double angle_degree, vector_3d axis) const {
     double angle = angle_degree / 180 * PI;
-    vector_3d perp = axis.normalize().cross(*this);
+    vector_3d perp = axis.get_direction_vector().cross(*this);
     vector_3d h_comp = scale(cos(angle));
     vector_3d v_comp = perp.scale(sin(angle));
     return h_comp.add(v_comp);
 }
 
 pair<vector_3d, vector_3d> vector_3d::orthogonal_projection(vector_3d v) const {
-    vector_3d v_unit = v.normalize();
+    vector_3d v_unit = v.get_direction_vector();
     double h_length = dot(v_unit);
     vector_3d h_comp = v_unit.scale(h_length);
     vector_3d v_comp = subtract(h_comp);
@@ -127,10 +127,10 @@ pair<vector_3d, vector_3d> vector_3d::orthogonal_projection(vector_3d v) const {
 }
 
 vector_3d vector_3d::reflect(vector_3d normal) const {
-    vector_3d n_unit = normal.normalize();
+    vector_3d n_unit = normal.get_direction_vector();
     double val = dot(n_unit);
     vector_3d u = n_unit.scale(2 * val);
-    return subtract(u).normalize();
+    return subtract(u).get_direction_vector();
 }
 
 vector_3d vector_3d::operator+(const vector_3d &another) const {
@@ -152,4 +152,12 @@ vector_3d vector_3d::operator*(double m) const {
     double y = j * m;
     double z = k * m;
     return vector_3d(x, y, z);
+}
+
+void vector_3d::normalize() {
+    double l = length();
+    assert(abs(l - 0.0) > 1.0e-9);
+    i /= l;
+    j /= l;
+    k /= l;
 }

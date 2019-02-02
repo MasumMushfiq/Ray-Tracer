@@ -19,7 +19,7 @@ void pyramid::complete_pyramid() {
 istream &operator>>(istream &stream, pyramid &s) {
     stream >> s.lower_left;
     stream >> s.width >> s.height;
-    stream >> s.colour.r >> s.colour.g >> s.colour.b;
+    stream >> s.colour;
     stream >> s.ambient >> s.diffuse >> s.specular >> s.reflection;
     stream >> s.shininess;
     return stream;

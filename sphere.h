@@ -20,6 +20,7 @@ struct sphere {
 
     // normal unit vector at point p where p is on the sphere
     vector_3d get_normal_at_point(const point &p) const;
+    bool is_inside(const point &p) const;
 };
 
 istream &operator>>(istream &stream, sphere &s);

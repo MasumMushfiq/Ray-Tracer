@@ -30,7 +30,7 @@ void cube::complete_cube() {
 istream &operator>>(istream &stream, cube &s) {
     stream >> s.bll;
     stream >> s.side;
-    stream >> s.colour.r >> s.colour.g >> s.colour.b;
+    stream >> s.colour;
     stream >> s.ambient >> s.diffuse >> s.specular >> s.reflection;
     stream >> s.shininess;
     return stream;
